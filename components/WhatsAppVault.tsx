@@ -3,14 +3,19 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@supabase/supabase-js";
-import { Smile, Send, CheckCheck, X, Trash2, Reply, SmilePlus, Image as ImageIcon, Download, Palette, ArrowLeft, Search, Upload, ChevronUp, ChevronDown, Loader2, Link2, ShieldCheck } from "lucide-react";
-import { Virtuoso, VirtuosoHandle } from "react-virtuoso"; // <-- NEW VIRTUALIZATION ENGINE
+import { 
+  Smile, Send, CheckCheck, X, Trash2, Reply, SmilePlus, 
+  Image as ImageIcon, Download, Palette, ArrowLeft, Search, 
+  Upload, ChevronUp, ChevronDown, Loader2, Link2, Sparkles, 
+  Lock, Unlock, ArrowDown, Database, Gift 
+} from "lucide-react";
+import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 const GIPHY_API_KEY = "m8EagdbaKHSgg529mP9wVp1qenRWNMkp";
 
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "YOUR_SUPABASE_URL",
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "YOUR_SUPABASE_ANON_KEY"
+  process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
 );
 
 type Message = { 
@@ -26,10 +31,28 @@ type Message = {
 };
 
 const EMOJI_CATEGORIES = {
-  smileys: ["😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "🥲", "☺️", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🥸", "🤩", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹", "😣", "😖", "😫", "😩", "🥺", "😢", "😭", "😤", "😠", "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", "😥", "😓", "🤗", "🤔", "🤭", "🤫", "🤥", "😶", "😐", "😑", "😬", "🙄", "😯", "😦", "😧", "😴", "🤤", "😷", "🤒", "🤕", "🤢", "🤮", "🤧", "🥴", "😵", "🤠", "🥸", "😎", "🫠", "🫥", "🫡", "🫢", "🫣", "🫤", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿", "😾"],
-  gestures: ["👋", "🤚", "🖐", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝️", "👍", "👎", "✊", "👊", "🤛", "🤜", "👏", "🙌", "👐", "🤲", "🤝", "🙏", "✍️", "💅", "🤳", "💪", "🦾", "🦵", "🦿", "🦶", "👂", "🦻", "👃", "🧠", "🦷", "🦴", "👀", "👁", "👅", "👄", "💋", "🫶", "🫱", "🫲", "🫳", "🫴", "🫰", "🫵"],
-  hearts: ["❤️️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❣", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "💟", "💌", "👥", "👤", "🗣", "💋", "💍", "💎", "🌹", "👑", "💐", "🌷", "🌸", "💮", "🏵️", "🌻", "🌼", "🍂", "🍁", "🫀", "🫁"],
-  objects: ["🎉", "🎊", "🎈", "🎂", "🎁", "🏆", "🏅", "🥇", "🥈", "🥉", "⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🏐", "🏉", "🥏", "🎱", "🪀", "🏓", "🏸", "🏒", "🏑", "🥍", "🏏", "🪃", "🥅", "⛳", "🪁", "🏹", "🎣", "🤿", "🥋", "🎽", "🛹", "🛼", "🛷", "⛸️", "🥌", "🎿", "🏄", "🪂", "🤺", "🐶", "🐱", "🦄", "⭐", "✨", "🔥", "🚀", "💫", "💡", "🔮", "🪄", "🧸", "🕯️"]
+  smileys: [
+    "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "🥲", "☺️", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", 
+    "😙", "😚", "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🥸", "🤩", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", 
+    "🙁", "☹", "😣", "😖", "😫", "😩", "🥺", "😢", "😭", "😤", "😠", "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", 
+    "😥", "😓", "🤗", "🤔", "🤭", "🤫", "🤥", "😶", "😐", "😑", "😬", "🙄", "😯", "😦", "😧", "😴", "🤤", "😷", "🤒", 
+    "🤕", "🤢", "🤮", "🤧", "🥴", "😵", "🤠", "🥸", "😎", "🫠", "🫥", "🫡", "🫢", "🫣", "🫤", 
+    "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿", "😾"
+  ],
+  gestures: [
+    "👋", "🤚", "🖐", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝️", "👍", 
+    "👎", "✊", "👊", "🤛", "🤜", "👏", "🙌", "👐", "🤲", "🤝", "🙏", "✍️", "💅", "🤳", "💪", "🦾", "🦵", "🦿", "🦶", "👂", 
+    "🦻", "👃", "🧠", "🦷", "🦴", "👀", "👁", "👅", "👄", "💋", "🫶", "🫱", "🫲", "🫳", "🫴", "🫰", "🫵"
+  ],
+  hearts: [
+    "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❣", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "💟", "💌", 
+    "👥", "👤", "🗣", "💋", "💍", "💎", "🌹", "👑", "💐", "🌷", "🌸", "💮", "🏵️", "🌻", "🌼", "🍂", "🍁", "🫀", "🫁"
+  ],
+  objects: [
+    "🎉", "🎊", "🎈", "🎂", "🎁", "🏆", "🏅", "🥇", "🥈", "🥉", "⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🏐", "🏐", "🥏", "🎱", 
+    "🪀", "🏓", "🏸", "🏒", "🏑", "🥍", "🏏", "🪃", "🥅", "⛳", "🪁", "🏹", "🎣", "🤿", "🥋", "🎽", "🛹", "🛼", "🛷", "⛸️", 
+    "🥌", "🎿", "🏄", "🪂", "🤺", "🐶", "🐱", "🦄", "⭐", "✨", "🔥", "🚀", "💫", "💡", "🔮", "🪄", "🧸", "🕯️"
+  ]
 };
 
 const WALLPAPERS = [
@@ -48,37 +71,64 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [pickerTab, setPickerTab] = useState<"emoji" | "gif" | null>(null);
   const [emojiCategory, setEmojiCategory] = useState<keyof typeof EMOJI_CATEGORIES>("smileys");
-  
-  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
-  const [loadingProgress, setLoadingProgress] = useState(0);
-  const [linkingReplyFor, setLinkingReplyFor] = useState<string | null>(null);
 
+  // MEMORIES & ARCHIVE STREAM STATE
+  const [isMemoriesUnlocked, setIsMemoriesUnlocked] = useState(false);
+  const [isRestoringArchive, setIsRestoringArchive] = useState(false);
+  const [restoredCount, setRestoredCount] = useState(0);
+
+  // SCROLL-TO-BOTTOM FLOATING BUTTON
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+
+  // GIPHY API STATE
   const [gifSearch, setGifSearch] = useState("");
   const [giphyResults, setGiphyResults] = useState<{ id: string; title: string; url: string }[]>([]);
   const [isFetchingGifs, setIsFetchingGifs] = useState(false);
 
+  // CUSTOMIZATION & INTERACTION
+  const [linkingReplyFor, setLinkingReplyFor] = useState<string | null>(null);
   const [activeReactionMenu, setActiveReactionMenu] = useState<string | null>(null);
   const [currentBgStyle, setCurrentBgStyle] = useState<string>("bg-[#0B141A]");
   const [customBgImage, setCustomBgImage] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  
+
+  // PRESENCE
   const [partnerOnline, setPartnerOnline] = useState(false);
   const [lastSeenTime, setLastSeenTime] = useState<string>("offline");
   const [partnerTyping, setPartnerTyping] = useState(false);
 
+  // IN-CHAT SEARCH
   const [isSearchingChat, setIsSearchingChat] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState("");
-  
-  // VIRTUALIZATION & SEARCH REFS
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [matchedIndices, setMatchedIndices] = useState<number[]>([]);
   const [currentMatchIndex, setCurrentMatchIndex] = useState<number>(-1);
+
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+
+  const formatLastSeen = (isoString: string | null) => {
+    if (!isoString) return "offline";
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return "offline";
+
+    const now = new Date();
+    const timeStr = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+
+    const isToday = now.toDateString() === date.toDateString();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const isYesterday = yesterday.toDateString() === date.toDateString();
+
+    if (isToday) return `last seen today at ${timeStr}`;
+    if (isYesterday) return `last seen yesterday at ${timeStr}`;
+    return `last seen ${date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${timeStr}`;
+  };
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = "auto"; };
   }, []);
 
+  // Giphy API Search effect
   useEffect(() => {
     if (pickerTab !== "gif") return;
     const fetchGiphy = async () => {
@@ -94,7 +144,9 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
         if (data && data.data) {
           const formatted = data.data.map((item: any) => ({
-            id: item.id, title: item.title || "GIF", url: item.images.fixed_height.url
+            id: item.id,
+            title: item.title || "GIF",
+            url: item.images.fixed_height.url
           }));
           setGiphyResults(formatted);
         }
@@ -108,65 +160,49 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     return () => clearTimeout(timer);
   }, [gifSearch, pickerTab]);
 
+  // 1. FAST INITIAL LOAD: Strict 48-Hour Partition
   useEffect(() => {
-    // MASSIVE PERFORMANCE FIX: State is gathered silently and only pushed to React ONCE.
-    const fetchAllMessages = async () => {
-      setIsLoadingHistory(true);
-      let allData: Message[] = [];
-      let page = 0;
-      const pageSize = 1000;
+    const loadRecentOnly = async () => {
+      const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
 
-      while (true) {
-        const { data, error } = await supabase
-          .from("secret_chat")
-          .select("*")
-          .order("created_at", { ascending: true })
-          .range(page * pageSize, (page + 1) * pageSize - 1);
+      const { data, error } = await supabase
+        .from("secret_chat")
+        .select("*")
+        .gte("created_at", fortyEightHoursAgo)
+        .order("created_at", { ascending: true });
 
-        if (error) {
-          console.error("Supabase fetch error:", error);
-          break;
-        }
-
-        if (data && data.length > 0) {
-          allData = [...allData, ...data];
-          setLoadingProgress(allData.length); // Only update progress number, NOT the huge array
-        }
-
-        if (!data || data.length < pageSize) break;
-        page++;
+      if (!error && data) {
+        setMessages(data);
       }
-      
-      setMessages(allData); // Deliver entire payload instantly to Virtuoso engine
-      setIsLoadingHistory(false);
-      
-      // Auto-scroll to bottom of the 30k list once loaded
-      setTimeout(() => {
-        virtuosoRef.current?.scrollToIndex({ index: allData.length - 1, align: 'end' });
-      }, 200);
     };
-
-    fetchAllMessages();
+    loadRecentOnly();
 
     const fetchLastSeen = async () => {
-      const { data } = await supabase.from("user_status").select("last_seen").eq("user_name", partnerName).single();
+      const { data } = await supabase
+        .from("user_status")
+        .select("last_seen")
+        .eq("user_name", partnerName)
+        .maybeSingle();
+
       if (data && data.last_seen) {
-        const date = new Date(data.last_seen);
-        setLastSeenTime(`last seen today at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+        setLastSeenTime(formatLastSeen(data.last_seen));
       }
     };
     fetchLastSeen();
 
-    const chatSub = supabase.channel("secret_chat_channel")
+    const chatSub = supabase
+      .channel("secret_chat_channel")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "secret_chat" }, (payload) => {
+        const incoming = payload.new as Message;
         setMessages((prev) => {
-          if (prev.some((m) => m.id === payload.new.id)) return prev;
-          return [...prev, payload.new as Message];
+          if (prev.some((m) => m.id === incoming.id)) return prev;
+          return [...prev, incoming];
         });
-        setTimeout(() => virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" }), 100);
+        setTimeout(() => virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" }), 60);
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "secret_chat" }, (payload) => {
-        setMessages((prev) => prev.map((m) => m.id === payload.new.id ? (payload.new as Message) : m));
+        const updated = payload.new as Message;
+        setMessages((prev) => prev.map((m) => m.id === updated.id ? updated : m));
       })
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "secret_chat" }, (payload) => {
         setMessages((prev) => prev.filter((m) => m.id !== payload.old.id));
@@ -174,62 +210,111 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
       .subscribe();
 
     const presenceChannel = supabase.channel("online_presence");
-    const updateMyStatus = async (isOnline: boolean) => {
-      await supabase.from("user_status").upsert({ user_name: identity, last_seen: isOnline ? null : new Date().toISOString() });
+    const updateStatus = async (online: boolean) => {
+      await supabase.from("user_status").upsert({ 
+        user_name: identity, 
+        last_seen: online ? null : new Date().toISOString() 
+      });
     };
 
     presenceChannel.on("presence", { event: "sync" }, () => {
       const state = presenceChannel.presenceState();
-      let isPartnerActive = false;
-      Object.keys(state).forEach((presenceId) => {
-        const userPresences = state[presenceId] as any[];
-        userPresences.forEach((p) => { if (p.user === partnerName) isPartnerActive = true; });
+      let active = false;
+      Object.keys(state).forEach((key) => {
+        (state[key] as any[]).forEach((p) => { if (p.user === partnerName) active = true; });
       });
-      setPartnerOnline(isPartnerActive);
-      if (isPartnerActive) setLastSeenTime("online");
-      else fetchLastSeen();
-    }).subscribe(async (status) => {
-      if (status === "SUBSCRIBED") {
+      setPartnerOnline(active);
+      if (active) {
+        setLastSeenTime("online");
+      } else {
+        fetchLastSeen();
+      }
+    }).subscribe(async (s) => {
+      if (s === "SUBSCRIBED") {
         await presenceChannel.track({ user: identity, online_at: new Date().toISOString() });
-        await updateMyStatus(true);
+        await updateStatus(true);
       }
     });
 
-    const heartbeat = setInterval(() => updateMyStatus(true), 15000);
     const typingChannel = supabase.channel("typing_presence", { config: { broadcast: { self: false } } });
-    
     typingChannel.on("broadcast", { event: "typing" }, (payload) => {
       if (payload.payload.sender === partnerName) setPartnerTyping(payload.payload.isTyping);
     }).subscribe();
 
     return () => {
-      clearInterval(heartbeat);
-      updateMyStatus(false);
+      updateStatus(false);
       supabase.removeChannel(chatSub);
       supabase.removeChannel(presenceChannel);
       supabase.removeChannel(typingChannel);
     };
-  }, []); 
+  }, [identity, partnerName]);
 
-  // OPTIMIZED INDEX SEARCH ALGORITHM FOR VIRTUALIZATION
-  useEffect(() => {
-    if (!chatSearchQuery.trim()) {
-      setMatchedIndices((prev) => prev.length > 0 ? [] : prev);
-      setCurrentMatchIndex((prev) => prev !== -1 ? -1 : prev);
-      return;
+  // 2. UNBLOCKING BACKGROUND STREAM: Chunks of 1,000 up to June 2026
+  const handleUnlockMemories = async () => {
+    if (isRestoringArchive || isMemoriesUnlocked) return;
+    setIsRestoringArchive(true);
+    setRestoredCount(0);
+
+    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    let localArchiveBuffer: Message[] = [];
+    let page = 0;
+    const batchSize = 1000;
+
+    while (true) {
+      const { data, error } = await supabase
+        .from("secret_chat")
+        .select("*")
+        .lt("created_at", fortyEightHoursAgo)
+        .order("created_at", { ascending: true })
+        .range(page * batchSize, (page + 1) * batchSize - 1);
+
+      if (error || !data || data.length === 0) break;
+
+      localArchiveBuffer = [...localArchiveBuffer, ...data];
+      setRestoredCount(localArchiveBuffer.length);
+
+      if (data.length < batchSize) break;
+      page++;
     }
 
+    // Atomic Prepend: Merge archive behind recent messages
+    setMessages((currentActive) => {
+      const combined = [...localArchiveBuffer, ...currentActive];
+      const seen = new Set<string>();
+      return combined.filter((m) => {
+        if (seen.has(m.id)) return false;
+        seen.add(m.id);
+        return true;
+      });
+    });
+
+    setIsMemoriesUnlocked(true);
+    setIsRestoringArchive(false);
+
+    // Keep screen anchored cleanly at bottom
+    setTimeout(() => {
+      virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
+    }, 120);
+  };
+
+  const scrollToBottom = () => {
+    virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" });
+  };
+
+  // Search Logic
+  useEffect(() => {
+    if (!chatSearchQuery.trim()) {
+      setMatchedIndices([]);
+      setCurrentMatchIndex(-1);
+      return;
+    }
     const matches = messages
       .map((m, idx) => m.text && m.text.toLowerCase().includes(chatSearchQuery.toLowerCase()) ? idx : -1)
-      .filter(idx => idx !== -1);
-
+      .filter((idx) => idx !== -1);
     setMatchedIndices(matches);
-    
     if (matches.length > 0) {
       setCurrentMatchIndex(matches.length - 1);
-      virtuosoRef.current?.scrollToIndex({ index: matches[matches.length - 1], align: 'center', behavior: 'smooth' });
-    } else {
-      setCurrentMatchIndex(-1);
+      virtuosoRef.current?.scrollToIndex({ index: matches[matches.length - 1], align: "center", behavior: "smooth" });
     }
   }, [chatSearchQuery, messages]);
 
@@ -237,14 +322,14 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     if (matchedIndices.length === 0) return;
     const nextIdx = (currentMatchIndex + 1) % matchedIndices.length;
     setCurrentMatchIndex(nextIdx);
-    virtuosoRef.current?.scrollToIndex({ index: matchedIndices[nextIdx], align: 'center', behavior: 'smooth' });
+    virtuosoRef.current?.scrollToIndex({ index: matchedIndices[nextIdx], align: "center", behavior: "smooth" });
   };
 
   const handlePrevMatch = () => {
     if (matchedIndices.length === 0) return;
     const prevIdx = (currentMatchIndex - 1 + matchedIndices.length) % matchedIndices.length;
     setCurrentMatchIndex(prevIdx);
-    virtuosoRef.current?.scrollToIndex({ index: matchedIndices[prevIdx], align: 'center', behavior: 'smooth' });
+    virtuosoRef.current?.scrollToIndex({ index: matchedIndices[prevIdx], align: "center", behavior: "smooth" });
   };
 
   const handleTypingChange = (val: string) => {
@@ -256,17 +341,29 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   const sendMessage = async (textToSend: string, mediaUrl?: string, mediaType?: string) => {
     if (!textToSend.trim() && !mediaUrl) return;
+
     await supabase.from("secret_chat").insert([{ 
-      sender: identity, text: textToSend || (mediaType === "gif" ? "GIF" : mediaType === "video" ? "🎬 Video" : "📷 Photo"), 
-      reply_to: replyingTo ? replyingTo.text : null, media_url: mediaUrl || null, media_type: mediaType || null
+      sender: identity, 
+      text: textToSend || (mediaType === "gif" ? "GIF" : mediaType === "video" ? "🎬 Video" : "📷 Photo"), 
+      reply_to: replyingTo ? replyingTo.text : null,
+      media_url: mediaUrl || null,
+      media_type: mediaType || null
     }]);
-    setNewMessage(""); setReplyingTo(null); setPickerTab(null); setGifSearch("");
-    supabase.channel("typing_presence").send({ type: "broadcast", event: "typing", payload: { sender: identity, isTyping: false } });
+
+    setNewMessage("");
+    setReplyingTo(null);
+    setPickerTab(null);
+    setGifSearch("");
+
+    supabase.channel("typing_presence").send({ 
+      type: "broadcast", event: "typing", payload: { sender: identity, isTyping: false } 
+    });
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64String = reader.result as string;
@@ -279,6 +376,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   const handleWallpaperUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     const reader = new FileReader();
     reader.onloadend = () => {
       setCustomBgImage(reader.result as string);
@@ -289,14 +387,17 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   const executeMagicLink = async (targetMsg: Message) => {
     if (!linkingReplyFor) return;
-    setMessages(prev => prev.map(m => m.id === linkingReplyFor ? { ...m, reply_to: targetMsg.text } : m));
+    setMessages((prev) => prev.map((m) => m.id === linkingReplyFor ? { ...m, reply_to: targetMsg.text } : m));
     await supabase.from("secret_chat").update({ reply_to: targetMsg.text }).eq("id", linkingReplyFor);
     setLinkingReplyFor(null);
   };
 
   const deleteMessage = async (msg: Message) => {
     const sentTime = new Date(msg.created_at).getTime();
-    if ((new Date().getTime() - sentTime) / (1000 * 60) > 15) return alert("Messages can only be deleted within 15 minutes of sending.");
+    if ((new Date().getTime() - sentTime) / (1000 * 60) > 15) {
+      alert("Messages can only be deleted within 15 minutes of sending.");
+      return;
+    }
     await supabase.from("secret_chat").update({ deleted: true, text: "This message was deleted." }).eq("id", msg.id);
   };
 
@@ -320,63 +421,80 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     link.click();
   };
 
-  const formatTime = (isoString: string) => new Date(isoString).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  const formatTime = (isoString: string) => 
+    new Date(isoString).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 
   return (
-    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="fixed inset-0 z-[99999] bg-[#0B141A] flex flex-col w-screen h-[100dvh] overflow-hidden">
+    <div className="fixed inset-0 z-[99999] bg-[#0B141A] flex flex-col w-screen h-[100dvh] overflow-hidden">
       
-      {/* DECRYPTION LOADER OVERLAY */}
+      {/* DISCREET BACKGROUND SYNC INDICATOR (Non-blocking pill) */}
       <AnimatePresence>
-        {isLoadingHistory && (
-          <motion.div initial={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-[999999] flex flex-col items-center justify-center bg-[#0B141A]/95 backdrop-blur-md">
-            <ShieldCheck className="w-16 h-16 text-[#00A884] mb-4" />
-            <p className="text-white text-lg font-bold tracking-widest uppercase mb-1">Vault Decryption</p>
-            <p className="text-[#8696A0] font-mono text-xs mb-8">Restoring end-to-end encrypted backup</p>
-            <div className="flex flex-col items-center">
-              <Loader2 className="w-8 h-8 text-[#00A884] animate-spin mb-4" />
-              <div className="bg-[#111B21] border border-white/10 px-6 py-2 rounded-full shadow-lg">
-                <span className="text-[#00A884] font-mono text-sm font-bold">{loadingProgress}</span>
-                <span className="text-white/60 font-mono text-xs ml-2">messages restored...</span>
-              </div>
-            </div>
+        {isRestoringArchive && (
+          <motion.div 
+            initial={{ y: -40, opacity: 0 }} 
+            animate={{ y: 0, opacity: 1 }} 
+            exit={{ y: -40, opacity: 0 }}
+            className="absolute top-16 right-4 z-50 bg-[#202C33]/95 border border-[#F472B6]/40 px-3 py-1.5 rounded-full shadow-2xl flex items-center gap-2 backdrop-blur-md"
+          >
+            <Loader2 className="w-3.5 h-3.5 text-[#F472B6] animate-spin" />
+            <span className="text-[11px] font-mono text-white/90">
+              Unwrapping memories ({restoredCount.toLocaleString()})...
+            </span>
           </motion.div>
         )}
       </AnimatePresence>
 
+      {/* Magic Link Top Notification */}
       <AnimatePresence>
         {linkingReplyFor && (
           <motion.div initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -50, opacity: 0 }} className="absolute top-16 left-0 right-0 z-[999] mx-auto w-11/12 md:w-1/2 bg-[#005C4B] text-white px-4 py-3 rounded-2xl shadow-2xl flex justify-between items-center border border-[#00A884]">
-            <span className="text-sm font-medium">Scroll up and select the message this replied to...</span>
+            <span className="text-sm font-medium">Click on the original message this replied to...</span>
             <button onClick={() => setLinkingReplyFor(null)} className="p-1 hover:bg-black/20 rounded-full"><X className="w-4 h-4" /></button>
           </motion.div>
         )}
       </AnimatePresence>
 
+      {/* WhatsApp Header */}
       <div className="bg-[#202C33] px-4 py-3 flex justify-between items-center border-b border-[#2A3942] z-30 shadow-md flex-shrink-0">
         <div className="flex items-center gap-3">
           <button onClick={onClose} className="text-[#8696A0] hover:text-white mr-1"><ArrowLeft className="w-6 h-6" /></button>
           <div className="relative">
             <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#9333EA] to-[#F472B6] flex items-center justify-center font-bold text-white text-sm">{partnerName[0]}</div>
-            {partnerOnline && <div className="absolute bottom-0 right-0 w-3 h-3 bg-[#00A884] border-2 border-[#202C33] rounded-full"></div>}
+            {partnerOnline && <div className="absolute bottom-0 right-0 w-3 h-3 bg-[#00A884] border-2 border-[#202C33] rounded-full" />}
           </div>
           <div className="text-left">
             <h3 className="text-white font-semibold text-base leading-tight">{partnerName}</h3>
-            <p className="text-[#00A884] text-xs font-medium">{partnerTyping ? "typing..." : partnerOnline ? "online" : lastSeenTime}</p>
+            <p className="text-[#00A884] text-xs font-medium">
+              {partnerTyping ? "typing..." : partnerOnline ? "online" : lastSeenTime}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-3 text-[#8696A0]">
           <button onClick={() => setIsSearchingChat(!isSearchingChat)} title="Search Chat"><Search className="w-5 h-5 hover:text-white" /></button>
           <button onClick={() => setShowSettings(!showSettings)} title="Change Wallpaper"><Palette className="w-5 h-5 hover:text-white" /></button>
+          <button onClick={exportChat} title="Export Chat"><Download className="w-5 h-5 hover:text-white" /></button>
           <button onClick={onClose} title="Close"><X className="w-6 h-6 hover:text-white" /></button>
         </div>
       </div>
 
+      {/* In-Chat Search Bar */}
       <AnimatePresence>
         {isSearchingChat && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="bg-[#1F2C34] px-4 py-2 border-b border-white/5 flex items-center gap-3 z-30 shadow-lg flex-shrink-0">
             <Search className="w-4 h-4 text-[#8696A0]" />
-            <input type="text" value={chatSearchQuery} onChange={(e) => setChatSearchQuery(e.target.value)} placeholder="Search conversation..." className="flex-1 bg-transparent text-white text-sm focus:outline-none placeholder:text-[#8696A0]" autoFocus />
-            {matchedIndices.length > 0 && <span className="text-xs text-[#8696A0] font-mono">{currentMatchIndex + 1} of {matchedIndices.length}</span>}
+            <input 
+              type="text" 
+              value={chatSearchQuery} 
+              onChange={(e) => setChatSearchQuery(e.target.value)} 
+              placeholder="Search conversation..." 
+              className="flex-1 bg-transparent text-white text-sm focus:outline-none placeholder:text-[#8696A0]" 
+              autoFocus
+            />
+            {matchedIndices.length > 0 && (
+              <span className="text-xs text-[#8696A0] font-mono">
+                {currentMatchIndex + 1} of {matchedIndices.length}
+              </span>
+            )}
             <div className="flex items-center gap-1">
               <button onClick={handlePrevMatch} disabled={matchedIndices.length === 0} className="text-[#8696A0] hover:text-white p-1 disabled:opacity-30"><ChevronUp className="w-5 h-5" /></button>
               <button onClick={handleNextMatch} disabled={matchedIndices.length === 0} className="text-[#8696A0] hover:text-white p-1 disabled:opacity-30"><ChevronDown className="w-5 h-5" /></button>
@@ -386,12 +504,17 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         )}
       </AnimatePresence>
 
+      {/* Wallpaper Settings */}
       <AnimatePresence>
         {showSettings && (
           <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="absolute top-16 right-4 bg-[#202C33] border border-white/10 p-4 rounded-2xl z-50 shadow-2xl w-64 text-left">
             <p className="text-xs text-[#8696A0] font-mono mb-2 uppercase tracking-wider">Chat Wallpaper</p>
             <div className="space-y-1 mb-3">
-              {WALLPAPERS.map(w => <button key={w.name} onClick={() => { setCurrentBgStyle(w.class); setCustomBgImage(null); setShowSettings(false); }} className="w-full text-xs text-white/90 hover:bg-white/5 px-3 py-2 rounded-lg text-left">{w.name}</button>)}
+              {WALLPAPERS.map(w => (
+                <button key={w.name} onClick={() => { setCurrentBgStyle(w.class); setCustomBgImage(null); setShowSettings(false); }} className="w-full text-xs text-white/90 hover:bg-white/5 px-3 py-2 rounded-lg text-left">
+                  {w.name}
+                </button>
+              ))}
             </div>
             <label className="flex items-center gap-2 w-full bg-white/5 hover:bg-white/10 text-xs text-white px-3 py-2.5 rounded-xl cursor-pointer transition-colors border border-white/10">
               <Upload className="w-4 h-4 text-[#F472B6]" /> Upload Custom Image
@@ -401,17 +524,73 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         )}
       </AnimatePresence>
 
-      <div className={`flex-1 min-h-0 w-full relative transition-colors duration-500 ${!customBgImage ? currentBgStyle : ''}`} style={customBgImage ? { backgroundImage: `url(${customBgImage})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}>
-        {/* REACT VIRTUOSO: Renders 30,000+ items at 60FPS using virtualization */}
+      {/* Chat Viewport with Virtuoso */}
+      <div 
+        className={`flex-1 min-h-0 w-full relative transition-colors duration-500 ${!customBgImage ? currentBgStyle : ''}`} 
+        style={customBgImage ? { backgroundImage: `url(${customBgImage})`, backgroundSize: "cover", backgroundPosition: "center" } : {}}
+      >
         <Virtuoso
           ref={virtuosoRef}
           data={messages}
           initialTopMostItemIndex={messages.length > 0 ? messages.length - 1 : 0}
-          style={{ height: '100%', width: '100%' }}
+          style={{ height: "100%", width: "100%" }}
+          atBottomStateChange={(atBottom) => setShowScrollBottom(!atBottom)}
           components={{
             Header: () => (
-              <div className="flex justify-center my-6">
-                <span className="bg-[#182229]/80 backdrop-blur-md text-[#8696A0] text-[10px] px-4 py-1.5 rounded-lg uppercase tracking-widest shadow-sm">🔒 End-to-End Encrypted Vault</span>
+              <div className="flex flex-col items-center justify-center my-6 space-y-3 px-4">
+                <span className="bg-[#182229]/80 backdrop-blur-md text-[#8696A0] text-[10px] px-4 py-1.5 rounded-lg uppercase tracking-widest shadow-sm">
+                  🔒 End-to-End Encrypted Vault
+                </span>
+
+                {/* BIRTHDAY SURPRISE / UNLOCK BANNER */}
+                {!isMemoriesUnlocked && (
+                  <motion.div 
+                    initial={{ scale: 0.95, opacity: 0, y: 10 }}
+                    animate={{ scale: 1, opacity: 1, y: 0 }}
+                    className="w-full max-w-md relative group mt-4 mb-2"
+                  >
+                    {/* Glowing animated background border effect */}
+                    <div className="absolute -inset-0.5 bg-gradient-to-r from-[#F472B6] to-[#9333EA] rounded-2xl blur opacity-30 group-hover:opacity-60 transition duration-1000 animate-pulse"></div>
+                    
+                    <div className="relative bg-[#111B21] border border-[#F472B6]/30 rounded-2xl p-5 text-center shadow-2xl overflow-hidden">
+                      {/* Decorative background flare */}
+                      <div className="absolute -top-10 -right-10 w-32 h-32 bg-[#9333EA] opacity-10 rounded-full blur-2xl"></div>
+                      <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-[#F472B6] opacity-10 rounded-full blur-2xl"></div>
+                      
+                      <div className="relative z-10 space-y-4">
+                        <div className="flex justify-center">
+                          <div className="w-12 h-12 bg-gradient-to-br from-[#9333EA] to-[#F472B6] rounded-full flex items-center justify-center shadow-lg shadow-pink-500/20 mb-1">
+                            <Gift className="w-6 h-6 text-white" />
+                          </div>
+                        </div>
+                        
+                        <div>
+                          <h3 className="text-transparent bg-clip-text bg-gradient-to-r from-[#F472B6] to-[#D8B4FE] font-bold text-sm uppercase tracking-widest mb-1">
+                            A Special Birthday Surprise
+                          </h3>
+                          <p className="text-[11px] text-[#8696A0] leading-relaxed px-2">
+                            Your recent messages are loaded. But a secured time capsule containing every single memory, late-night conversation, and joke from 2024 to 2026 is waiting for you.
+                          </p>
+                        </div>
+
+                        <button
+                          onClick={handleUnlockMemories}
+                          disabled={isRestoringArchive}
+                          className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-[#9333EA] to-[#F472B6] hover:from-[#7e22ce] hover:to-[#db2777] text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg shadow-pink-500/25 disabled:opacity-50"
+                        >
+                          {isRestoringArchive ? <Loader2 className="w-4 h-4 animate-spin text-white" /> : <Sparkles className="w-4 h-4 text-white" />}
+                          {isRestoringArchive ? "Unwrapping Memories..." : "Unwrap Memories (2024–2026)"}
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+
+                {isMemoriesUnlocked && (
+                  <div className="flex items-center gap-1.5 text-[#F472B6] text-[11px] font-mono bg-[#F472B6]/10 border border-[#F472B6]/30 px-3 py-1 rounded-full">
+                    <Gift className="w-3.5 h-3.5" /> Full Time Capsule Unwrapped ({messages.length.toLocaleString()} memories)
+                  </div>
+                )}
               </div>
             )
           }}
@@ -431,14 +610,17 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
             }
 
             return (
-              <div className="px-4 py-2 w-full flex flex-col">
-                <div key={msg.id} onClick={() => { if (linkingReplyFor && linkingReplyFor !== msg.id) executeMagicLink(msg); }} className={`flex flex-col group relative ${isMe ? "items-end" : "items-start"} transition-all duration-300 ${isHighlighted ? "scale-[1.02]" : ""} ${linkingReplyFor && linkingReplyFor !== msg.id ? "cursor-pointer hover:opacity-70 hover:scale-[1.01]" : ""}`}>
+              <div className="px-4 py-1.5 w-full flex flex-col">
+                <div 
+                  onClick={() => { if (linkingReplyFor && linkingReplyFor !== msg.id) executeMagicLink(msg); }}
+                  className={`flex flex-col group relative ${isMe ? "items-end" : "items-start"} transition-all duration-300 ${isHighlighted ? "scale-[1.02]" : ""}`}
+                >
                   {!msg.deleted && !linkingReplyFor && (
                     <div className={`absolute -top-3 ${isMe ? "right-2" : "left-2"} hidden group-hover:flex items-center gap-1 bg-[#202C33] border border-white/10 rounded-full px-2 py-0.5 z-20 shadow-lg`}>
-                      <button onClick={(e) => { e.stopPropagation(); setReplyingTo(msg); }} title="Reply" className="text-white/70 hover:text-white p-1"><Reply className="w-3 h-3" /></button>
-                      <button onClick={(e) => { e.stopPropagation(); setLinkingReplyFor(msg.id); }} title="Magic Link (Make this a reply)" className="text-white/70 hover:text-[#00A884] p-1"><Link2 className="w-3 h-3" /></button>
-                      <button onClick={(e) => { e.stopPropagation(); setActiveReactionMenu(activeReactionMenu === msg.id ? null : msg.id); }} title="React" className="text-white/70 hover:text-white p-1"><SmilePlus className="w-3 h-3" /></button>
-                      {isMe && <button onClick={(e) => { e.stopPropagation(); deleteMessage(msg); }} title="Delete" className="text-red-400 hover:text-red-300 p-1"><Trash2 className="w-3 h-3" /></button>}
+                      <button onClick={(e) => { e.stopPropagation(); setReplyingTo(msg); }} title="Reply"><Reply className="w-3 h-3 text-white/70 hover:text-white" /></button>
+                      <button onClick={(e) => { e.stopPropagation(); setLinkingReplyFor(msg.id); }} title="Link as Reply"><Link2 className="w-3 h-3 text-white/70 hover:text-[#00A884]" /></button>
+                      <button onClick={(e) => { e.stopPropagation(); setActiveReactionMenu(activeReactionMenu === msg.id ? null : msg.id); }} title="React"><SmilePlus className="w-3 h-3 text-white/70 hover:text-white" /></button>
+                      {isMe && <button onClick={(e) => { e.stopPropagation(); deleteMessage(msg); }} title="Delete"><Trash2 className="w-3 h-3 text-red-400 hover:text-red-300" /></button>}
                     </div>
                   )}
 
@@ -450,7 +632,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                     </div>
                   )}
 
-                  <div className={`max-w-[85%] md:max-w-[70%] px-3.5 pt-2.5 pb-1.5 rounded-2xl relative shadow-md ${isMe ? "bg-[#005C4B] text-[#E9EDEF] rounded-tr-none" : "bg-[#202C33] text-[#E9EDEF] rounded-tl-none"} ${msg.deleted ? "opacity-50 italic" : ""} ${isHighlighted ? "ring-2 ring-[#00A884] bg-emerald-950" : ""} ${linkingReplyFor === msg.id ? "ring-4 ring-blue-500 animate-pulse" : ""}`}>
+                  <div className={`max-w-[85%] md:max-w-[70%] px-3.5 pt-2.5 pb-1.5 rounded-2xl relative shadow-md ${isMe ? "bg-[#005C4B] text-[#E9EDEF] rounded-tr-none" : "bg-[#202C33] text-[#E9EDEF] rounded-tl-none"} ${isHighlighted ? "ring-2 ring-[#00A884] bg-emerald-950" : ""}`}>
                     
                     {msg.reply_to && msg.reply_to.trim() !== "" && (
                       <div className={`relative overflow-hidden p-2.5 mb-1.5 rounded-lg border-l-4 ${isMe ? 'border-[#10b981] bg-[#025144]' : 'border-[#F472B6] bg-[#1d282f]'}`}>
@@ -462,7 +644,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                     {isGif && msg.media_url && <img src={msg.media_url} alt="GIF" className="rounded-xl max-w-[240px] max-h-[220px] object-cover my-1" />}
                     {msg.media_url && !isGif && msg.media_type === "image" && <img src={msg.media_url} alt="Media" className="rounded-xl max-w-full max-h-[280px] object-cover my-1" />}
                     {msg.media_url && !isGif && msg.media_type === "video" && <video src={msg.media_url} controls className="rounded-xl max-w-full max-h-[280px] object-cover my-1" />}
-                    {msg.text && !isGif && !msg.media_url && <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">{msg.text}</p>}
+                    {msg.text && !isGif && !msg.media_url && <p className="text-[14px] leading-relaxed break-words whitespace-pre-wrap">{msg.text}</p>}
 
                     {reactionDisplay.length > 0 && !msg.deleted && (
                       <motion.div initial={{ scale: 0, opacity: 0, y: 15 }} animate={{ scale: 1, opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 400, damping: 15 }} className="absolute -bottom-2 right-2 bg-[#202C33] border border-white/20 rounded-full px-2 py-0.5 text-xs shadow-2xl z-10 flex items-center gap-1">
@@ -470,7 +652,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                       </motion.div>
                     )}
 
-                    <div className="flex items-center justify-end gap-1.5 mt-1 opacity-70">
+                    <div className="flex items-center justify-end gap-1.5 mt-0.5 opacity-70">
                       <span className="text-[10px] font-mono">{formatTime(msg.created_at)}</span>
                       {isMe && <CheckCheck className={`w-3.5 h-3.5 ${partnerOnline ? "text-[#53bdeb]" : "text-white/40"}`} />}
                     </div>
@@ -480,16 +662,25 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
             );
           }}
         />
+
+        {/* Floating Scroll-Down Button */}
+        <AnimatePresence>
+          {showScrollBottom && (
+            <motion.button
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0, opacity: 0 }}
+              onClick={scrollToBottom}
+              className="absolute bottom-6 right-6 z-40 bg-[#202C33]/90 hover:bg-[#2A3942] text-white p-3 rounded-full shadow-2xl border border-white/10 backdrop-blur-md flex items-center justify-center transition-all hover:scale-110"
+              title="Jump to bottom"
+            >
+              <ArrowDown className="w-5 h-5 text-[#00A884]" />
+            </motion.button>
+          )}
+        </AnimatePresence>
       </div>
 
-      <AnimatePresence>
-        {partnerTyping && (
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="px-4 py-1.5 bg-[#1F2C34] text-[#00A884] text-xs font-mono italic flex items-center gap-2 border-t border-white/5 flex-shrink-0">
-            <span className="w-2 h-2 rounded-full bg-[#00A884] animate-ping"></span> {partnerName} is typing...
-          </motion.div>
-        )}
-      </AnimatePresence>
-
+      {/* Reply Preview */}
       <AnimatePresence>
         {replyingTo && (
           <div className="bg-[#1F2C34] px-4 py-2 flex justify-between items-center border-t border-white/5 flex-shrink-0">
@@ -502,6 +693,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         )}
       </AnimatePresence>
 
+      {/* Full Emoji & Giphy Drawer */}
       <AnimatePresence>
         {pickerTab && (
           <motion.div initial={{ height: 0 }} animate={{ height: 320 }} exit={{ height: 0 }} className="bg-[#1F2C34] border-t border-white/5 flex flex-col overflow-hidden flex-shrink-0">
@@ -523,7 +715,14 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
               <div className="px-3 pt-2 flex-shrink-0">
                 <div className="bg-[#2A3942] rounded-lg px-3 py-1.5 flex items-center gap-2">
                   <Search className="w-4 h-4 text-[#8696A0]" />
-                  <input type="text" value={gifSearch} onChange={(e) => setGifSearch(e.target.value)} placeholder="Search millions of live GIFs..." className="bg-transparent text-white text-xs w-full focus:outline-none placeholder:text-[#8696A0]" autoFocus />
+                  <input 
+                    type="text" 
+                    value={gifSearch} 
+                    onChange={(e) => setGifSearch(e.target.value)} 
+                    placeholder="Search millions of live GIFs..." 
+                    className="bg-transparent text-white text-xs w-full focus:outline-none placeholder:text-[#8696A0]" 
+                    autoFocus
+                  />
                 </div>
               </div>
             )}
@@ -555,13 +754,26 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         )}
       </AnimatePresence>
 
+      {/* Input Bar */}
       <form onSubmit={(e) => { e.preventDefault(); sendMessage(newMessage); }} className="bg-[#202C33] px-3 py-3 flex items-center gap-2 border-t border-[#2A3942] z-20 flex-shrink-0">
         <button type="button" onClick={() => setPickerTab(pickerTab === "emoji" ? null : "emoji")} className="text-[#8696A0] hover:text-white p-2"><Smile className="w-6 h-6" /></button>
         <button type="button" onClick={() => setPickerTab(pickerTab === "gif" ? null : "gif")} className="text-[#8696A0] hover:text-white p-2 text-xs font-bold border border-[#8696A0] rounded px-1.5 py-0.5">GIF</button>
-        <label className="text-[#8696A0] hover:text-white p-2 cursor-pointer" title="Send Photo/Video"><ImageIcon className="w-6 h-6" /><input type="file" accept="image/*,video/*" onChange={handleFileUpload} className="hidden" /></label>
-        <input type="text" value={newMessage} onChange={(e) => handleTypingChange(e.target.value)} placeholder="Type a message" className="flex-1 bg-[#2A3942] text-[#E9EDEF] rounded-xl px-4 py-3 text-[15px] focus:outline-none placeholder:text-[#8696A0]" />
-        <button type="submit" disabled={!newMessage.trim()} className="bg-[#00A884] w-11 h-11 rounded-full flex items-center justify-center text-black hover:bg-[#00c298] transition-colors disabled:opacity-50 flex-shrink-0"><Send className="w-5 h-5 ml-0.5" /></button>
+        <label className="text-[#8696A0] hover:text-white p-2 cursor-pointer" title="Send Photo/Video">
+          <ImageIcon className="w-6 h-6" />
+          <input type="file" accept="image/*,video/*" onChange={handleFileUpload} className="hidden" />
+        </label>
+
+        <input
+          type="text"
+          value={newMessage}
+          onChange={(e) => handleTypingChange(e.target.value)}
+          placeholder="Type a message"
+          className="flex-1 bg-[#2A3942] text-[#E9EDEF] rounded-xl px-4 py-3 text-[15px] focus:outline-none placeholder:text-[#8696A0]"
+        />
+        <button type="submit" disabled={!newMessage.trim()} className="bg-[#00A884] w-11 h-11 rounded-full flex items-center justify-center text-black hover:bg-[#00c298] disabled:opacity-50">
+          <Send className="w-5 h-5 ml-0.5" />
+        </button>
       </form>
-    </motion.div>
+    </div>
   );
 }

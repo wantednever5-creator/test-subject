@@ -1,100 +1,166 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Smile, KeyRound } from "lucide-react";
-import WhatsAppVault from "./WhatsAppVault";
+import { Smile, Gift } from "lucide-react";
+import WhatsAppVault from "./WhatsAppVault"; 
 
-// ==========================================
-// 🔒 ENTRANCE CREDENTIALS
-// ==========================================
-const SECRETS = {
-  MOON: { id: "moon", pass: "17thbirthday" },
-  KRIPTON: { id: "kripton", pass: "bossman" }
-};
-
+// --- THE CINEMATIC CAKE SCENE ---
 const SVGCakeScene = ({ onOpenVault }: { onOpenVault: () => void }) => {
-  const [candleBlown, setCandleBlown] = useState(false);
+  const [seqStep, setSeqStep] = useState(0); 
+
+  useEffect(() => {
+    if (seqStep === 2) setTimeout(() => setSeqStep(3), 1500); 
+    if (seqStep === 3) setTimeout(() => setSeqStep(4), 1500); 
+    if (seqStep === 4) setTimeout(() => setSeqStep(5), 1500); 
+    if (seqStep === 5) setTimeout(() => setSeqStep(6), 4000); 
+    if (seqStep === 6) setTimeout(() => setSeqStep(7), 3000); 
+  }, [seqStep]);
 
   return (
-    <div className="relative w-full max-w-2xl mx-auto h-[420px] bg-black/50 border border-white/10 rounded-[3.5rem] backdrop-blur-2xl flex flex-col items-center justify-end pb-12 overflow-visible shadow-[0_0_60px_rgba(147,51,234,0.25)]">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-[#9333EA]/20 via-transparent to-transparent pointer-events-none rounded-[3.5rem]"></div>
+    <div className="relative w-full max-w-4xl mx-auto h-[600px] flex items-end justify-center pb-20 mt-12 bg-black/20 border border-white/5 rounded-[3.5rem] shadow-[0_0_60px_rgba(147,51,234,0.1)] overflow-hidden">
+      
+      {/* INITIAL TRIGGER BUTTON */}
+      <AnimatePresence>
+        {seqStep === 0 && (
+          <motion.button
+            initial={{ scale: 0, y: 50 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0, y: 50 }}
+            onClick={() => setSeqStep(1)}
+            className="absolute z-[9999] px-8 py-4 bg-gradient-to-tr from-[#9333EA] to-[#F472B6] rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(244,114,182,0.6)] outline-none group hover:shadow-[0_0_50px_rgba(244,114,182,0.9)] transition-shadow text-white font-bold tracking-widest uppercase text-sm"
+            whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+          >
+            Light The Candle
+          </motion.button>
+        )}
+      </AnimatePresence>
 
-      <div className="relative w-full flex items-end justify-center px-8 gap-8 md:gap-20 z-20 mt-12">
-        <div className="relative flex flex-col items-center">
-          <AnimatePresence>
-            {candleBlown && (
-              <motion.div 
-                initial={{ opacity: 0, scale: 0, y: 15 }} animate={{ opacity: 1, scale: 1, y: 0 }}
-                className="absolute -top-32 left-0 w-60 md:w-72 bg-white text-black p-4 rounded-2xl rounded-bl-none shadow-2xl text-left z-40"
-              >
-                <p className="font-semibold text-xs md:text-sm leading-relaxed">
-                  "Happy 17th Birthday, Moon! Here is your final gift..."
-                </p>
+      {/* MOON (Standing by the cake) */}
+      <AnimatePresence>
+        {seqStep >= 1 && (
+          <motion.div className="absolute bottom-10 right-[10%] md:right-[20%] z-20"
+            initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 1 }}
+          >
+            <svg viewBox="0 0 100 120" className="w-[120px] md:w-[160px] drop-shadow-[0_0_20px_rgba(244,114,182,0.5)]">
+              <motion.g animate={{ y: [0, -5, 0] }} transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}>
+                <rect x="75" y="40" width="15" height="40" rx="7.5" fill="#DB2777" />
+                <rect x="25" y="20" width="55" height="70" rx="27.5" fill="#F472B6" />
+                <rect x="10" y="40" width="45" height="25" rx="12.5" fill="#93C5FD" stroke="#1E3A8A" strokeWidth="2" />
+                <path d="M 20 48 Q 30 43 40 48" stroke="#FFFFFF" strokeWidth="3" fill="transparent" strokeLinecap="round" opacity="0.6"/>
+                <motion.g animate={{ rotate: [-5, 10, -5] }} transition={{ duration: 2.5, repeat: Infinity }} transform="translate(60, 10)">
+                  <path d="M 0 0 C -8 -12, 8 -12, 0 0 C 12 -8, 12 8, 0 0 C 8 12, -8 12, 0 0 C -12 8, -12 -8, 0 0 Z" fill="#FDE047" />
+                  <circle cx="0" cy="0" r="3" fill="#CA8A04" />
+                </motion.g>
+              </motion.g>
+            </svg>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* THE CAKE */}
+      <AnimatePresence>
+        {seqStep >= 1 && (
+          <motion.div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center"
+            initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 1, delay: 0.5 }}
+          >
+            {/* The Interactive Candle/Flame */}
+            <div className="relative w-12 h-20 flex flex-col items-center -mb-2 z-40">
+              <AnimatePresence>
+                {seqStep === 1 && (
+                  <motion.div 
+                    exit={{ opacity: 0, scale: 0, y: -20 }}
+                    className="w-6 h-10 bg-gradient-to-t from-orange-500 via-yellow-300 to-white rounded-[50%_50%_50%_50%/60%_60%_40%_40%] cursor-pointer shadow-[0_0_30px_#FDE047]"
+                    animate={{ scale: [1, 1.1, 1], rotate: [-2, 2, -2] }} transition={{ duration: 0.5, repeat: Infinity }}
+                    onClick={() => setSeqStep(2)} // BLOW OUT CANDLE
+                  />
+                )}
+              </AnimatePresence>
+              {/* Smoke Effect when blown */}
+              {seqStep >= 2 && (
+                <motion.div 
+                  initial={{ opacity: 1, y: 0, scale: 1 }} animate={{ opacity: 0, y: -100, scale: 3, x: [-10, 10, -20] }} transition={{ duration: 3, ease: "easeOut" }}
+                  className="w-4 h-4 bg-white/40 blur-md rounded-full absolute top-0"
+                />
+              )}
+              <div className="w-2 h-10 bg-gradient-to-b from-white to-gray-300 rounded-sm mt-1"></div>
+            </div>
+
+            {/* 3-Tier Cake Body */}
+            <div className="flex flex-col items-center">
+              <div className="w-24 h-12 bg-gradient-to-b from-[#FDE047] to-[#CA8A04] rounded-t-xl rounded-b-md border-b border-black/20 shadow-[0_-5px_20px_rgba(253,224,71,0.4)]"></div>
+              <div className="w-32 h-14 bg-gradient-to-b from-[#F472B6] to-[#BE185D] rounded-t-md rounded-b-md border-b border-black/20 shadow-[0_-5px_20px_rgba(244,114,182,0.4)]"></div>
+              <div className="w-44 h-16 bg-gradient-to-b from-[#9333EA] to-[#581C87] rounded-t-md rounded-b-2xl shadow-[0_10px_30px_rgba(147,51,234,0.6)] flex items-center justify-center">
+                <span className="text-white/80 font-bold tracking-widest text-sm">17</span>
+              </div>
+            </div>
+            
+            {seqStep === 1 && (
+              <motion.div animate={{ opacity: [0.5, 1, 0.5] }} transition={{ duration: 2, repeat: Infinity }} className="absolute -bottom-16 w-64 text-center">
+                <p className="text-[#FDE047] font-mono text-sm tracking-widest uppercase drop-shadow-[0_0_10px_#FDE047]">Make a wish & tap the flame</p>
               </motion.div>
             )}
-          </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-          <svg viewBox="0 0 100 120" className="w-[110px] md:w-[140px] drop-shadow-[0_0_20px_rgba(147,51,234,0.5)]">
-            <rect x="10" y="40" width="15" height="40" rx="7.5" fill="#6D28D9" />
-            <rect x="20" y="20" width="55" height="70" rx="27.5" fill="#7C3AED" />
-            <rect x="45" y="40" width="45" height="25" rx="12.5" fill="#1F2937" stroke="#111827" strokeWidth="2" />
-          </svg>
-        </div>
-
-        <div className="relative flex flex-col items-center z-30">
-          <div className="relative w-8 h-16 flex flex-col items-center -mb-2 z-40">
-            {!candleBlown ? (
-              <motion.div 
-                className="w-5 h-9 bg-gradient-to-t from-orange-500 via-yellow-300 to-white rounded-[50%] cursor-pointer shadow-[0_0_25px_#FDE047]"
-                animate={{ scale: [1, 1.15, 1], rotate: [-3, 3, -3] }} transition={{ duration: 0.4, repeat: Infinity }}
-                onClick={() => setCandleBlown(true)}
-              />
-            ) : (
-              <motion.div 
-                initial={{ opacity: 1, y: 0, scale: 1 }} animate={{ opacity: 0, y: -40, scale: 2 }} transition={{ duration: 2 }}
-                className="w-3 h-3 bg-white/50 blur-sm rounded-full absolute top-0"
-              />
-            )}
-            <div className="w-1.5 h-8 bg-white rounded-sm mt-1"></div>
-          </div>
-
-          <div className="flex flex-col items-center cursor-pointer" onClick={() => !candleBlown && setCandleBlown(true)}>
-            <div className="w-20 h-9 bg-gradient-to-b from-[#FDE047] to-[#CA8A04] rounded-t-lg"></div>
-            <div className="w-28 h-12 bg-gradient-to-b from-[#F472B6] to-[#BE185D] rounded-t-md"></div>
-            <div className="w-36 h-14 bg-gradient-to-b from-[#9333EA] to-[#581C87] rounded-t-md rounded-b-xl flex items-center justify-center">
-              <span className="text-white font-bold text-sm tracking-widest">17</span>
-            </div>
-          </div>
-
-          {!candleBlown && (
-            <motion.p animate={{ opacity: [0.4, 1, 0.4] }} transition={{ duration: 1.5, repeat: Infinity }} className="absolute -bottom-10 text-[11px] md:text-xs font-mono text-[#FDE047] uppercase tracking-widest whitespace-nowrap">
-              Click flame to blow candle
-            </motion.p>
-          )}
-        </div>
-
-        <div className="relative flex flex-col items-center">
-          <svg viewBox="0 0 100 120" className="w-[110px] md:w-[140px] drop-shadow-[0_0_20px_rgba(244,114,182,0.5)]">
-            <rect x="75" y="40" width="15" height="40" rx="7.5" fill="#DB2777" />
-            <rect x="25" y="20" width="55" height="70" rx="27.5" fill="#F472B6" />
-            <rect x="10" y="40" width="45" height="25" rx="12.5" fill="#93C5FD" stroke="#1E3A8A" strokeWidth="2" />
-            <g transform="translate(60, 10)">
-              <path d="M 0 0 C -8 -12, 8 -12, 0 0 C 12 -8, 12 8, 0 0 C 8 12, -8 12, 0 0 C -12 8, -12 -8, 0 0 Z" fill="#FDE047" />
-            </g>
-          </svg>
-        </div>
-      </div>
-
+      {/* KRIPTON (Enters from left, claps) */}
       <AnimatePresence>
-        {candleBlown && (
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-8 z-40">
-            <button 
-              onClick={onOpenVault}
-              className="px-10 py-4 rounded-full bg-gradient-to-r from-[#9333EA] to-[#F472B6] text-white font-bold tracking-widest uppercase text-xs md:text-sm shadow-[0_0_30px_rgba(244,114,182,0.7)] hover:scale-105 transition-transform"
-            >
-              🔓 Open Our Secret Chat Vault
-            </button>
+        {seqStep >= 3 && (
+          <motion.div className="absolute bottom-10 left-[5%] md:left-[15%] z-20"
+            initial={{ x: "-100vw", opacity: 0 }}
+            animate={{ 
+              x: 0, opacity: 1,
+              y: seqStep >= 4 ? [0, -30, 0, -20, 0] : 0 
+            }} 
+            transition={{ 
+              x: { type: "spring", stiffness: 60, damping: 15 },
+              y: { duration: 1, repeat: seqStep === 4 ? Infinity : 0 }
+            }}
+          >
+            <svg viewBox="0 0 100 120" className="w-[120px] md:w-[160px] drop-shadow-[0_0_20px_rgba(147,51,234,0.5)]">
+              <rect x="10" y="40" width="15" height="40" rx="7.5" fill="#6D28D9" />
+              <rect x="20" y="20" width="55" height="70" rx="27.5" fill="#7C3AED" />
+              <rect x="45" y="40" width="45" height="25" rx="12.5" fill="#1F2937" stroke="#111827" strokeWidth="2" />
+              <path d="M 55 50 Q 65 60 75 50" stroke="#4B5563" strokeWidth="3" fill="transparent" strokeLinecap="round" />
+            </svg>
+
+            {/* Clapping Sparkles */}
+            {seqStep === 4 && (
+              <>
+                <motion.div animate={{ scale: [0, 1.5, 0], y: -50, x: -20 }} transition={{ duration: 0.5, repeat: Infinity }} className="absolute top-10 right-0 w-4 h-4 bg-yellow-300 rounded-full blur-[2px]" />
+                <motion.div animate={{ scale: [0, 1.5, 0], y: -30, x: 30 }} transition={{ duration: 0.5, repeat: Infinity, delay: 0.2 }} className="absolute top-10 right-0 w-3 h-3 bg-pink-400 rounded-full blur-[2px]" />
+              </>
+            )}
+
+            {/* The Chat Bubbles */}
+            <AnimatePresence>
+              {seqStep >= 5 && seqStep <= 7 && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0, originX: 0, originY: 1 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0 }}
+                  className="absolute bottom-[110%] left-[80%] w-64 md:w-80 bg-white rounded-2xl rounded-bl-none p-5 shadow-[0_10px_40px_rgba(255,255,255,0.2)] z-50"
+                >
+                  <p className="text-black font-semibold text-lg md:text-xl">
+                    {seqStep === 5 ? "Happy 17th Birthday! 🎉" : "A gift for you.. won't you see what it is?"}
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* THE FINAL GIFT TRIGGER -> OPENS VAULT */}
+      <AnimatePresence>
+        {seqStep >= 7 && (
+          <motion.div 
+            initial={{ opacity: 0, y: -100, scale: 0 }} animate={{ opacity: 1, y: -250, scale: 1 }}
+            className="absolute bottom-10 left-1/2 -translate-x-1/2 z-50 cursor-pointer group"
+            onClick={onOpenVault}
+          >
+            <div className="w-24 h-24 bg-gradient-to-tr from-[#9333EA] to-[#F472B6] rounded-xl flex items-center justify-center shadow-[0_0_50px_rgba(244,114,182,0.8)] border border-white/40 group-hover:scale-110 transition-transform duration-300">
+              <Gift className="w-12 h-12 text-white animate-pulse" />
+              <div className="absolute -inset-4 bg-white/20 rounded-xl blur-xl group-hover:bg-white/40 transition-colors"></div>
+            </div>
+            <p className="text-white font-mono text-center mt-6 tracking-widest uppercase animate-bounce drop-shadow-[0_0_10px_#fff]">Click to Open</p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -102,28 +168,8 @@ const SVGCakeScene = ({ onOpenVault }: { onOpenVault: () => void }) => {
   );
 };
 
-export default function Ending() {
-  const [siteUnlocked, setSiteUnlocked] = useState(false);
-  const [inputId, setInputId] = useState("");
-  const [inputPass, setInputPass] = useState("");
-  const [loginError, setLoginError] = useState(false);
-  const [identity, setIdentity] = useState<"Kripton" | "Moon" | null>(null);
+export default function Ending({ identity }: { identity: string }) {
   const [showVault, setShowVault] = useState(false);
-
-  const handleSiteLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError(false);
-    if (inputId.toLowerCase() === SECRETS.MOON.id && inputPass === SECRETS.MOON.pass) {
-      setIdentity("Moon");
-      setSiteUnlocked(true);
-    } else if (inputId.toLowerCase() === SECRETS.KRIPTON.id && inputPass === SECRETS.KRIPTON.pass) {
-      setIdentity("Kripton");
-      setSiteUnlocked(true);
-    } else {
-      setLoginError(true);
-      setTimeout(() => setLoginError(false), 2000);
-    }
-  };
 
   const fadeUp: any = {
     hidden: { opacity: 0, y: 50 },
@@ -134,42 +180,6 @@ export default function Ending() {
     hidden: { opacity: 0 },
     show: { opacity: 1, transition: { staggerChildren: 0.2, delayChildren: 0.1 } },
   };
-
-  // --- STRICT ENTRANCE LOGIN LOCKSCREEN (No persistent storage, strictly secure) ---
-  if (!siteUnlocked) {
-    return (
-      <div className="fixed inset-0 z-[99999] bg-[#050505] flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-[#0B141A] rounded-3xl p-8 border border-white/10 shadow-[0_0_60px_rgba(147,51,234,0.3)] text-center relative overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-[#9333EA]/10 via-transparent to-transparent pointer-events-none"></div>
-          
-          <KeyRound className="w-12 h-12 text-[#9333EA] mx-auto mb-4 animate-pulse relative z-10" />
-          <h2 className="text-white text-2xl font-light tracking-widest uppercase mb-2 relative z-10">Secure Gateway</h2>
-          <p className="text-white/40 text-xs font-mono mb-8 relative z-10">Enter Credentials to Unlock Domain</p>
-          
-          <form onSubmit={handleSiteLogin} className="space-y-4 relative z-10">
-            <input 
-              type="text" 
-              value={inputId} 
-              onChange={(e) => setInputId(e.target.value)} 
-              placeholder="Identification (ID)"
-              className="w-full bg-black/50 border border-white/10 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#F472B6] font-mono" 
-            />
-            <input 
-              type="password" 
-              value={inputPass} 
-              onChange={(e) => setInputPass(e.target.value)} 
-              placeholder="Passcode"
-              className="w-full bg-black/50 border border-white/10 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#F472B6] font-mono tracking-widest" 
-            />
-            {loginError && <p className="text-red-400 text-xs font-mono text-left">Access Denied. Check credentials.</p>}
-            <button type="submit" className="w-full py-4 rounded-xl bg-gradient-to-r from-[#9333EA] to-[#F472B6] text-white font-bold tracking-widest uppercase text-sm shadow-lg">
-              Decrypt & Enter
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <section className="relative z-10 py-32 px-4 flex flex-col items-center text-center max-w-4xl mx-auto min-h-screen justify-center">
@@ -188,7 +198,6 @@ export default function Ending() {
           "I already have the best girlfriend I could possibly ever have in any imaginable or real universe. Have a bright smile over your beautiful face and just go on with your day."
         </motion.p>
 
-        {/* THE SYNCED SIGN-OFF */}
         <motion.div variants={fadeUp} className="flex flex-col items-center gap-4 text-base md:text-lg font-light text-white/80 bg-white/[0.02] border border-white/5 backdrop-blur-2xl p-10 rounded-[2rem] w-full max-w-md mx-auto shadow-2xl relative overflow-hidden group hover:border-[#F472B6]/30 transition-all duration-700">
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-1/2 h-[2px] bg-gradient-to-r from-transparent via-[#F472B6] to-transparent"></div>
           <Smile className="w-10 h-10 text-[#F472B6] mb-4 group-hover:scale-110 transition-transform duration-500" />
@@ -198,7 +207,7 @@ export default function Ending() {
         </motion.div>
 
         {/* THE INTERACTIVE CAKE CUT SCENE */}
-        <motion.div variants={fadeUp} className="w-full mt-24">
+        <motion.div variants={fadeUp} className="w-full mt-10">
           <SVGCakeScene onOpenVault={() => setShowVault(true)} />
         </motion.div>
 
@@ -206,7 +215,7 @@ export default function Ending() {
 
       {/* --- FULL-SCREEN WHATSAPP VAULT MODAL --- */}
       <AnimatePresence>
-        {showVault && identity && (
+        {showVault && (
           <WhatsAppVault identity={identity} onClose={() => setShowVault(false)} />
         )}
       </AnimatePresence>
