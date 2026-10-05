@@ -88,6 +88,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   // CUSTOMIZATION & INTERACTION
   const [linkingReplyFor, setLinkingReplyFor] = useState<string | null>(null);
   const [activeReactionMenu, setActiveReactionMenu] = useState<string | null>(null);
+  const [activeTouchMenu, setActiveTouchMenu] = useState<string | null>(null); 
   const [currentBgStyle, setCurrentBgStyle] = useState<string>("bg-[#0B141A]");
   const [customBgImage, setCustomBgImage] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -410,6 +411,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     reactions[identity] = emoji;
     await supabase.from("secret_chat").update({ reaction: JSON.stringify(reactions) }).eq("id", msg.id);
     setActiveReactionMenu(null);
+    setActiveTouchMenu(null);
   };
 
   const exportChat = () => {
@@ -427,7 +429,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   return (
     <div className="fixed inset-0 z-[99999] bg-[#0B141A] flex flex-col w-screen h-[100dvh] overflow-hidden">
       
-      {/* DISCREET BACKGROUND SYNC INDICATOR (Non-blocking pill) */}
+      {/* DISCREET BACKGROUND SYNC INDICATOR */}
       <AnimatePresence>
         {isRestoringArchive && (
           <motion.div 
@@ -549,11 +551,9 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                     animate={{ scale: 1, opacity: 1, y: 0 }}
                     className="w-full max-w-md relative group mt-4 mb-2"
                   >
-                    {/* Glowing animated background border effect */}
                     <div className="absolute -inset-0.5 bg-gradient-to-r from-[#F472B6] to-[#9333EA] rounded-2xl blur opacity-30 group-hover:opacity-60 transition duration-1000 animate-pulse"></div>
                     
                     <div className="relative bg-[#111B21] border border-[#F472B6]/30 rounded-2xl p-5 text-center shadow-2xl overflow-hidden">
-                      {/* Decorative background flare */}
                       <div className="absolute -top-10 -right-10 w-32 h-32 bg-[#9333EA] opacity-10 rounded-full blur-2xl"></div>
                       <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-[#F472B6] opacity-10 rounded-full blur-2xl"></div>
                       
@@ -612,22 +612,59 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
             return (
               <div className="px-4 py-1.5 w-full flex flex-col">
                 <div 
-                  onClick={() => { if (linkingReplyFor && linkingReplyFor !== msg.id) executeMagicLink(msg); }}
+                  onClick={() => { 
+                    if (linkingReplyFor && linkingReplyFor !== msg.id) {
+                      executeMagicLink(msg);
+                    } else {
+                      // TOUCH/ANDROID FIX: Toggle menu when message is tapped
+                      setActiveTouchMenu(activeTouchMenu === msg.id ? null : msg.id);
+                    }
+                  }}
                   className={`flex flex-col group relative ${isMe ? "items-end" : "items-start"} transition-all duration-300 ${isHighlighted ? "scale-[1.02]" : ""}`}
                 >
+                  
+                  {/* MOBILE-OPTIMIZED ACTION BAR: Larger hitboxes (p-2.5) & explicit touch blocking */}
                   {!msg.deleted && !linkingReplyFor && (
-                    <div className={`absolute -top-3 ${isMe ? "right-2" : "left-2"} hidden group-hover:flex items-center gap-1 bg-[#202C33] border border-white/10 rounded-full px-2 py-0.5 z-20 shadow-lg`}>
-                      <button onClick={(e) => { e.stopPropagation(); setReplyingTo(msg); }} title="Reply"><Reply className="w-3 h-3 text-white/70 hover:text-white" /></button>
-                      <button onClick={(e) => { e.stopPropagation(); setLinkingReplyFor(msg.id); }} title="Link as Reply"><Link2 className="w-3 h-3 text-white/70 hover:text-[#00A884]" /></button>
-                      <button onClick={(e) => { e.stopPropagation(); setActiveReactionMenu(activeReactionMenu === msg.id ? null : msg.id); }} title="React"><SmilePlus className="w-3 h-3 text-white/70 hover:text-white" /></button>
-                      {isMe && <button onClick={(e) => { e.stopPropagation(); deleteMessage(msg); }} title="Delete"><Trash2 className="w-3 h-3 text-red-400 hover:text-red-300" /></button>}
+                    <div className={`absolute -top-6 ${isMe ? "right-2" : "left-2"} ${activeTouchMenu === msg.id ? 'flex' : 'hidden md:group-hover:flex'} items-center gap-1 bg-[#202C33] border border-white/10 rounded-2xl px-2 py-1 z-30 shadow-xl transition-all`}>
+                      <button 
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setReplyingTo(msg); setActiveTouchMenu(null); }} 
+                        title="Reply" className="p-2.5 cursor-pointer"
+                      >
+                        <Reply className="w-4 h-4 text-white/70 hover:text-white" />
+                      </button>
+                      <button 
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setLinkingReplyFor(msg.id); setActiveTouchMenu(null); }} 
+                        title="Link as Reply" className="p-2.5 cursor-pointer"
+                      >
+                        <Link2 className="w-4 h-4 text-white/70 hover:text-[#00A884]" />
+                      </button>
+                      <button 
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveReactionMenu(activeReactionMenu === msg.id ? null : msg.id); }} 
+                        title="React" className="p-2.5 cursor-pointer"
+                      >
+                        <SmilePlus className="w-4 h-4 text-white/70 hover:text-white" />
+                      </button>
+                      {isMe && (
+                        <button 
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteMessage(msg); setActiveTouchMenu(null); }} 
+                          title="Delete" className="p-2.5 cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4 text-red-400 hover:text-red-300" />
+                        </button>
+                      )}
                     </div>
                   )}
 
                   {activeReactionMenu === msg.id && !msg.deleted && (
-                    <div className={`absolute top-6 ${isMe ? "right-0" : "left-0"} bg-[#202C33] border border-white/10 rounded-2xl p-2 flex gap-1 z-30 shadow-xl`}>
+                    <div className={`absolute top-8 ${isMe ? "right-0" : "left-0"} bg-[#202C33] border border-white/10 rounded-2xl p-2 flex gap-1 z-40 shadow-2xl`}>
                       {["❤️", "🔥", "😂", "👍", "🥹", "🎉"].map((emoji) => (
-                        <button key={emoji} onClick={(e) => { e.stopPropagation(); addReaction(msg, emoji); }} className="hover:scale-125 transition-transform p-1 text-base">{emoji}</button>
+                        <button 
+                          key={emoji} 
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); addReaction(msg, emoji); }} 
+                          className="hover:scale-125 transition-transform p-3 text-2xl cursor-pointer"
+                        >
+                          {emoji}
+                        </button>
                       ))}
                     </div>
                   )}
