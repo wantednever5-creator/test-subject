@@ -69,11 +69,11 @@ export default function Constellation() {
 
   const starsData = [
     { id: 1, x: 15, y: 25, label: "01. Among Us", lore: "LOG 01 DECODED: Private lobbies, hours of talking, no games played." },
-    { id: 2, x: 45, y: 15, label: "02. The Balcony", lore: "LOG 02 DECODED: The night of the picture exchange and balcony gaze." },
-    { id: 3, x: 80, y: 35, label: "03. 270 KM", lore: "LOG 03 DECODED: Jaipur to Delhi long-distance telemetry." },
-    { id: 4, x: 25, y: 75, label: "04. Override", lore: "LOG 04 DECODED: The logical machine short-circuited by an 'awww'." },
-    { id: 5, x: 70, y: 70, label: "05. Delhi Next", lore: "LOG 05 DECODED: The upcoming reality of college in Delhi." },
-    { id: 6, x: 50, y: 45, label: "06. MA MOON", lore: "LOG 06 DECODED: Core Node synchronized. Universal center locked." },
+    { id: 2, x: 45, y: 15, label: "02. The first picture exchange", lore: "LOG 02 DECODED: The night of the picture exchange and balcony gaze." },
+    { id: 3, x: 80, y: 35, label: "03. on my way", lore: "LOG 03 DECODED: Jaipur to Delhi long-distance telemetry." },
+    { id: 4, x: 25, y: 75, label: "04. cant handle your cuteness anymore", lore: "LOG 04 DECODED: The logical machine short-circuited by an 'awww'." },
+    { id: 5, x: 70, y: 70, label: "05. just come to delhi asap", lore: "LOG 05 DECODED: The upcoming reality of college in Delhi." },
+    { id: 6, x: 50, y: 45, label: "06. you are MA MOON foreover", lore: "LOG 06 DECODED: Core Node synchronized. Universal center locked." },
   ];
 
   return (
