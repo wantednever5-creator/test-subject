@@ -16,7 +16,7 @@ export default function BackgroundAudio() {
   const [showMenu, setShowMenu] = useState(false);
   const [tracks, setTracks] = useState<MusicTrack[]>([]);
   const [currentTrack, setCurrentTrack] = useState<MusicTrack | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false); // MUTED BY DEFAULT
+  const [isPlaying, setIsPlaying] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -33,9 +33,10 @@ export default function BackgroundAudio() {
     }
   }, []);
 
+  // Auto-refresh the tracklist every time the menu is opened!
   useEffect(() => { 
     fetchMusic(); 
-  }, [fetchMusic]);
+  }, [fetchMusic, showMenu]);
 
   const togglePlay = (track: MusicTrack) => {
     if (currentTrack?.url === track.url) {
@@ -68,14 +69,14 @@ export default function BackgroundAudio() {
   };
 
   return (
-    // z-[999999] ensures this floats above absolutely everything, including the chat vault
-    <div className="fixed top-6 left-6 z-[999999]">
+    // Positioned Top-Center to perfectly fit between the Chat Name and Chat Icons
+    <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[999999] flex flex-col items-center">
       <audio ref={audioRef} src={currentTrack?.url} loop onEnded={() => setIsPlaying(false)} />
       
       <motion.button 
         initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
         onClick={() => setShowMenu(!showMenu)}
-        className="bg-[#202C33]/90 backdrop-blur-md border border-[#F472B6]/50 text-[#F472B6] px-4 py-2.5 rounded-full font-mono text-xs flex items-center gap-2 shadow-xl hover:bg-[#F472B6] hover:text-black transition-colors"
+        className="bg-[#202C33]/90 backdrop-blur-md border border-[#F472B6]/50 text-[#F472B6] px-4 py-2 rounded-full font-mono text-xs flex items-center gap-2 shadow-xl hover:bg-[#F472B6] hover:text-black transition-colors"
       >
         <Music className={`w-4 h-4 ${isPlaying ? "animate-pulse" : ""}`} /> 
         Library
@@ -83,7 +84,7 @@ export default function BackgroundAudio() {
 
       <AnimatePresence>
         {showMenu && (
-          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="absolute top-14 left-0 bg-[#111B21] border border-[#F472B6]/30 p-4 rounded-2xl shadow-2xl w-72 text-left max-h-[60vh] flex flex-col">
+          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="absolute top-12 bg-[#111B21] border border-[#F472B6]/30 p-4 rounded-2xl shadow-2xl w-72 text-left max-h-[60vh] flex flex-col">
             <div className="flex justify-between items-center mb-3">
               <p className="text-xs text-[#F472B6] font-mono uppercase tracking-wider font-bold flex items-center gap-2">
                 <Music className="w-4 h-4" /> Vault Music
