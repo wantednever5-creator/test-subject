@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@supabase/supabase-js";
 import { 
   Smile, Send, CheckCheck, X, Trash2, Reply, SmilePlus, 
   Image as ImageIcon, Download, Palette, ArrowLeft, Search, 
   Upload, ChevronUp, ChevronDown, Loader2, Link2, Sparkles, 
-  Lock, Unlock, ArrowDown, Database, Gift 
+  Lock, Unlock, ArrowDown, Database, Gift, Music, Play, Pause, Maximize
 } from "lucide-react";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
@@ -30,6 +30,11 @@ type Message = {
   media_type?: string | null;
 };
 
+type MusicTrack = {
+  name: string;
+  url: string;
+};
+
 const EMOJI_CATEGORIES = {
   smileys: [
     "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "🥲", "☺️", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", 
@@ -40,7 +45,7 @@ const EMOJI_CATEGORIES = {
     "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿", "😾"
   ],
   gestures: [
-    "👋", "🤚", "🖐", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝️", "👍", 
+    "👋", "🤚", "🖐", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝", "👍", 
     "👎", "✊", "👊", "🤛", "🤜", "👏", "🙌", "👐", "🤲", "🤝", "🙏", "✍️", "💅", "🤳", "💪", "🦾", "🦵", "🦿", "🦶", "👂", 
     "🦻", "👃", "🧠", "🦷", "🦴", "👀", "👁", "👅", "👄", "💋", "🫶", "🫱", "🫲", "🫳", "🫴", "🫰", "🫵"
   ],
@@ -50,8 +55,8 @@ const EMOJI_CATEGORIES = {
   ],
   objects: [
     "🎉", "🎊", "🎈", "🎂", "🎁", "🏆", "🏅", "🥇", "🥈", "🥉", "⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🏐", "🏐", "🥏", "🎱", 
-    "🪀", "🏓", "🏸", "🏒", "🏑", "🥍", "🏏", "🪃", "🥅", "⛳", "🪁", "🏹", "🎣", "🤿", "🥋", "🎽", "🛹", "🛼", "🛷", "⛸️️", 
-    "🥌", "🎿", "🏄", "🪂", "🤺", "🐶", "🐱", "🦄", "⭐", "✨", "🔥", "🚀", "💫", "💡", "🔮", "🪄", "🧸", "🕯️️"
+    "🪀", "🏓", "🏸", "🏒", "🏑", "🥍", "🏏", "🪃", "🥅", "⛳", "🪁", "🏹", "🎣", "🤿", "🥋", "🎽", "🛹", "🛼", "🛷", "⛸️", 
+    "🥌", "🎿", "🏄", "🪂", "🤺", "🐶", "🐱", "🦄", "⭐", "✨", "🔥", "🚀", "💫", "💡", "🔮", "🪄", "🧸", "🕯️"
   ]
 };
 
@@ -72,20 +77,29 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   const [pickerTab, setPickerTab] = useState<"emoji" | "gif" | null>(null);
   const [emojiCategory, setEmojiCategory] = useState<keyof typeof EMOJI_CATEGORIES>("smileys");
 
+  // ANDROID VIEWPORT FIX STATE
+  const [viewportHeight, setViewportHeight] = useState<number>(0);
+
+  // FULLSCREEN MEDIA STATE
+  const [fullscreenMedia, setFullscreenMedia] = useState<{ url: string; type: string } | null>(null);
+
+  // DYNAMIC MUSIC PLAYER STATE
+  const [showMusicMenu, setShowMusicMenu] = useState(false);
+  const [musicTracks, setMusicTracks] = useState<MusicTrack[]>([]);
+  const [currentTrack, setCurrentTrack] = useState<MusicTrack | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   // MEMORIES & ARCHIVE STREAM STATE
   const [isMemoriesUnlocked, setIsMemoriesUnlocked] = useState(false);
   const [isRestoringArchive, setIsRestoringArchive] = useState(false);
   const [restoredCount, setRestoredCount] = useState(0);
 
-  // SCROLL-TO-BOTTOM FLOATING BUTTON
   const [showScrollBottom, setShowScrollBottom] = useState(false);
-
-  // GIPHY API STATE
   const [gifSearch, setGifSearch] = useState("");
   const [giphyResults, setGiphyResults] = useState<{ id: string; title: string; url: string }[]>([]);
   const [isFetchingGifs, setIsFetchingGifs] = useState(false);
 
-  // CUSTOMIZATION & INTERACTION
   const [linkingReplyFor, setLinkingReplyFor] = useState<string | null>(null);
   const [activeReactionMenu, setActiveReactionMenu] = useState<string | null>(null);
   const [activeTouchMenu, setActiveTouchMenu] = useState<string | null>(null); 
@@ -93,12 +107,10 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   const [customBgImage, setCustomBgImage] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
-  // PRESENCE
   const [partnerOnline, setPartnerOnline] = useState(false);
   const [lastSeenTime, setLastSeenTime] = useState<string>("offline");
   const [partnerTyping, setPartnerTyping] = useState(false);
 
-  // IN-CHAT SEARCH
   const [isSearchingChat, setIsSearchingChat] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState("");
   const [matchedIndices, setMatchedIndices] = useState<number[]>([]);
@@ -106,88 +118,111 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
 
+  // 1. Android Black Bar & Viewport Fix
+  useEffect(() => {
+    setViewportHeight(window.innerHeight);
+    const handleResize = () => {
+      if (window.visualViewport) {
+        setViewportHeight(window.visualViewport.height);
+      } else {
+        setViewportHeight(window.innerHeight);
+      }
+    };
+    window.visualViewport?.addEventListener("resize", handleResize);
+    window.addEventListener("resize", handleResize);
+
+    // Request Notification Permissions
+    if (typeof window !== "undefined" && "Notification" in window) {
+      Notification.requestPermission();
+    }
+
+    return () => {
+      window.visualViewport?.removeEventListener("resize", handleResize);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  // 2. Fetch Music From Supabase Bucket 'vault_music'
+  useEffect(() => {
+    const fetchMusic = async () => {
+      const { data, error } = await supabase.storage.from("vault_music").list();
+      if (!error && data) {
+        const tracks = data
+          .filter((file) => file.name.endsWith(".mp3") || file.name.endsWith(".wav"))
+          .map((file) => ({
+            name: file.name.replace(/\.[^/.]+$/, ""), // Remove extension
+            url: supabase.storage.from("vault_music").getPublicUrl(file.name).data.publicUrl,
+          }));
+        setMusicTracks(tracks);
+      }
+    };
+    fetchMusic();
+  }, []);
+
+  // Play audio track
+  const togglePlayTrack = (track: MusicTrack) => {
+    if (currentTrack?.url === track.url) {
+      if (isPlaying) {
+        audioRef.current?.pause();
+        setIsPlaying(false);
+      } else {
+        audioRef.current?.play();
+        setIsPlaying(true);
+      }
+    } else {
+      setCurrentTrack(track);
+      setIsPlaying(true);
+    }
+  };
+
+  useEffect(() => {
+    if (audioRef.current && currentTrack) {
+      if (isPlaying) {
+        audioRef.current.play().catch((e) => console.log("Audio play error:", e));
+      } else {
+        audioRef.current.pause();
+      }
+    }
+  }, [currentTrack, isPlaying]);
+
   const formatLastSeen = (isoString: string | null) => {
     if (!isoString) return "offline";
     const date = new Date(isoString);
     if (isNaN(date.getTime())) return "offline";
-
     const now = new Date();
     const timeStr = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
-
-    const isToday = now.toDateString() === date.toDateString();
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const isYesterday = yesterday.toDateString() === date.toDateString();
-
-    if (isToday) return `last seen today at ${timeStr}`;
-    if (isYesterday) return `last seen yesterday at ${timeStr}`;
+    if (now.toDateString() === date.toDateString()) return `last seen today at ${timeStr}`;
     return `last seen ${date.toLocaleDateString([], { month: "short", day: "numeric" })} at ${timeStr}`;
   };
 
-  useEffect(() => {
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = "auto"; };
+  const playNotificationSound = () => {
+    try {
+      const audio = new Audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg");
+      audio.volume = 0.5;
+      audio.play().catch(() => {});
+    } catch(e) {}
+  };
+
+  const loadRecentOnly = useCallback(async () => {
+    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from("secret_chat")
+      .select("*")
+      .gte("created_at", fortyEightHoursAgo)
+      .order("created_at", { ascending: true });
+
+    if (!error && data) {
+      setMessages(data);
+      setTimeout(() => virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" }), 200);
+    }
   }, []);
 
-  // Giphy API Search effect
   useEffect(() => {
-    if (pickerTab !== "gif") return;
-    const fetchGiphy = async () => {
-      setIsFetchingGifs(true);
-      try {
-        const query = gifSearch.trim() ? encodeURIComponent(gifSearch) : "love cute happy dance romance";
-        const endpoint = gifSearch.trim()
-          ? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${query}&limit=30`
-          : `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=30`;
-
-        const res = await fetch(endpoint);
-        const data = await res.json();
-
-        if (data && data.data) {
-          const formatted = data.data.map((item: any) => ({
-            id: item.id,
-            title: item.title || "GIF",
-            url: item.images.fixed_height.url
-          }));
-          setGiphyResults(formatted);
-        }
-      } catch (err) {
-        console.error("Giphy API fetch error:", err);
-      } finally {
-        setIsFetchingGifs(false);
-      }
-    };
-    const timer = setTimeout(fetchGiphy, 300);
-    return () => clearTimeout(timer);
-  }, [gifSearch, pickerTab]);
-
-  // 1. FAST INITIAL LOAD: Strict 48-Hour Partition
-  useEffect(() => {
-    const loadRecentOnly = async () => {
-      const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-
-      const { data, error } = await supabase
-        .from("secret_chat")
-        .select("*")
-        .gte("created_at", fortyEightHoursAgo)
-        .order("created_at", { ascending: true });
-
-      if (!error && data) {
-        setMessages(data);
-      }
-    };
     loadRecentOnly();
 
     const fetchLastSeen = async () => {
-      const { data } = await supabase
-        .from("user_status")
-        .select("last_seen")
-        .eq("user_name", partnerName)
-        .maybeSingle();
-
-      if (data && data.last_seen) {
-        setLastSeenTime(formatLastSeen(data.last_seen));
-      }
+      const { data } = await supabase.from("user_status").select("last_seen").eq("user_name", partnerName).maybeSingle();
+      if (data && data.last_seen) setLastSeenTime(formatLastSeen(data.last_seen));
     };
     fetchLastSeen();
 
@@ -199,7 +234,15 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
           if (prev.some((m) => m.id === incoming.id)) return prev;
           return [...prev, incoming];
         });
-        setTimeout(() => virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" }), 60);
+        
+        // Push notification & sound for incoming texts
+        if (incoming.sender !== identity) {
+          playNotificationSound();
+          if ("Notification" in window && Notification.permission === "granted") {
+            new Notification(incoming.sender, { body: incoming.text || "Sent a media file" });
+          }
+        }
+        setTimeout(() => virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" }), 100);
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "secret_chat" }, (payload) => {
         const updated = payload.new as Message;
@@ -212,10 +255,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
     const presenceChannel = supabase.channel("online_presence");
     const updateStatus = async (online: boolean) => {
-      await supabase.from("user_status").upsert({ 
-        user_name: identity, 
-        last_seen: online ? null : new Date().toISOString() 
-      });
+      await supabase.from("user_status").upsert({ user_name: identity, last_seen: online ? null : new Date().toISOString() });
     };
 
     presenceChannel.on("presence", { event: "sync" }, () => {
@@ -225,11 +265,8 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         (state[key] as any[]).forEach((p) => { if (p.user === partnerName) active = true; });
       });
       setPartnerOnline(active);
-      if (active) {
-        setLastSeenTime("online");
-      } else {
-        fetchLastSeen();
-      }
+      if (active) setLastSeenTime("online");
+      else fetchLastSeen();
     }).subscribe(async (s) => {
       if (s === "SUBSCRIBED") {
         await presenceChannel.track({ user: identity, online_at: new Date().toISOString() });
@@ -242,15 +279,47 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
       if (payload.payload.sender === partnerName) setPartnerTyping(payload.payload.isTyping);
     }).subscribe();
 
+    // Fix Android Chrome background sleep sync drop
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        if (!isMemoriesUnlocked) loadRecentOnly();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
     return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
       updateStatus(false);
       supabase.removeChannel(chatSub);
       supabase.removeChannel(presenceChannel);
       supabase.removeChannel(typingChannel);
     };
-  }, [identity, partnerName]);
+  }, [identity, partnerName, loadRecentOnly, isMemoriesUnlocked]);
 
-  // 2. UNBLOCKING BACKGROUND STREAM: Chunks of 1,000 up to June 2026
+  useEffect(() => {
+    if (pickerTab !== "gif") return;
+    const fetchGiphy = async () => {
+      setIsFetchingGifs(true);
+      try {
+        const query = gifSearch.trim() ? encodeURIComponent(gifSearch) : "love cute happy dance romance";
+        const endpoint = gifSearch.trim()
+          ? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${query}&limit=30`
+          : `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=30`;
+        const res = await fetch(endpoint);
+        const data = await res.json();
+        if (data && data.data) {
+          setGiphyResults(data.data.map((item: any) => ({
+            id: item.id, title: item.title || "GIF", url: item.images.fixed_height.url
+          })));
+        }
+      } catch (err) {} finally {
+        setIsFetchingGifs(false);
+      }
+    };
+    const timer = setTimeout(fetchGiphy, 300);
+    return () => clearTimeout(timer);
+  }, [gifSearch, pickerTab]);
+
   const handleUnlockMemories = async () => {
     if (isRestoringArchive || isMemoriesUnlocked) return;
     setIsRestoringArchive(true);
@@ -270,15 +339,12 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         .range(page * batchSize, (page + 1) * batchSize - 1);
 
       if (error || !data || data.length === 0) break;
-
       localArchiveBuffer = [...localArchiveBuffer, ...data];
       setRestoredCount(localArchiveBuffer.length);
-
       if (data.length < batchSize) break;
       page++;
     }
 
-    // Atomic Prepend: Merge archive behind recent messages
     setMessages((currentActive) => {
       const combined = [...localArchiveBuffer, ...currentActive];
       const seen = new Set<string>();
@@ -291,18 +357,14 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
     setIsMemoriesUnlocked(true);
     setIsRestoringArchive(false);
-
-    // Keep screen anchored cleanly at bottom
-    setTimeout(() => {
-      virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" });
-    }, 120);
+    setTimeout(() => virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" }), 120);
   };
 
   const scrollToBottom = () => {
     virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" });
   };
 
-  // Search Logic
+  // --- MISSING SEARCH LOGIC RESTORED HERE ---
   useEffect(() => {
     if (!chatSearchQuery.trim()) {
       setMatchedIndices([]);
@@ -332,39 +394,26 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     setCurrentMatchIndex(prevIdx);
     virtuosoRef.current?.scrollToIndex({ index: matchedIndices[prevIdx], align: "center", behavior: "smooth" });
   };
+  // ------------------------------------------
 
   const handleTypingChange = (val: string) => {
     setNewMessage(val);
-    supabase.channel("typing_presence").send({
-      type: "broadcast", event: "typing", payload: { sender: identity, isTyping: val.length > 0 }
-    });
+    supabase.channel("typing_presence").send({ type: "broadcast", event: "typing", payload: { sender: identity, isTyping: val.length > 0 } });
   };
 
   const sendMessage = async (textToSend: string, mediaUrl?: string, mediaType?: string) => {
     if (!textToSend.trim() && !mediaUrl) return;
-
     await supabase.from("secret_chat").insert([{ 
-      sender: identity, 
-      text: textToSend || (mediaType === "gif" ? "GIF" : mediaType === "video" ? "🎬 Video" : "📷 Photo"), 
-      reply_to: replyingTo ? replyingTo.text : null,
-      media_url: mediaUrl || null,
-      media_type: mediaType || null
+      sender: identity, text: textToSend || (mediaType === "gif" ? "GIF" : mediaType === "video" ? "🎬 Video" : "📷 Photo"), 
+      reply_to: replyingTo ? replyingTo.text : null, media_url: mediaUrl || null, media_type: mediaType || null
     }]);
-
-    setNewMessage("");
-    setReplyingTo(null);
-    setPickerTab(null);
-    setGifSearch("");
-
-    supabase.channel("typing_presence").send({ 
-      type: "broadcast", event: "typing", payload: { sender: identity, isTyping: false } 
-    });
+    setNewMessage(""); setReplyingTo(null); setPickerTab(null); setGifSearch("");
+    supabase.channel("typing_presence").send({ type: "broadcast", event: "typing", payload: { sender: identity, isTyping: false } });
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64String = reader.result as string;
@@ -377,7 +426,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   const handleWallpaperUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onloadend = () => {
       setCustomBgImage(reader.result as string);
@@ -396,8 +444,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   const deleteMessage = async (msg: Message) => {
     const sentTime = new Date(msg.created_at).getTime();
     if ((new Date().getTime() - sentTime) / (1000 * 60) > 15) {
-      alert("Messages can only be deleted within 15 minutes of sending.");
-      return;
+      alert("Messages can only be deleted within 15 minutes of sending."); return;
     }
     await supabase.from("secret_chat").update({ deleted: true, text: "This message was deleted." }).eq("id", msg.id);
   };
@@ -423,19 +470,58 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     link.click();
   };
 
-  const formatTime = (isoString: string) => 
-    new Date(isoString).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  const downloadMedia = async (url: string, type: string) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `Vault_Media_${Date.now()}.${type === "video" ? "mp4" : "png"}`;
+      link.click();
+    } catch (e) {
+      alert("Unable to download file.");
+    }
+  };
+
+  const formatTime = (isoString: string) => new Date(isoString).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 
   return (
-    <div className="fixed inset-0 z-[99999] bg-[#0B141A] flex flex-col w-screen h-[100dvh] overflow-hidden">
+    <div 
+      className="fixed inset-0 z-[99999] bg-[#0B141A] flex flex-col w-screen overflow-hidden"
+      style={{ height: viewportHeight ? `${viewportHeight}px` : "100dvh" }}
+    >
+      {/* Hidden Audio Player for Music */}
+      <audio ref={audioRef} src={currentTrack?.url} loop onEnded={() => setIsPlaying(false)} />
+
+      {/* FULLSCREEN MEDIA OVERLAY */}
+      <AnimatePresence>
+        {fullscreenMedia && (
+          <motion.div 
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[999999] bg-black/95 backdrop-blur-xl flex flex-col items-center justify-center p-4"
+          >
+            <div className="absolute top-6 right-6 flex gap-4">
+              <button onClick={() => downloadMedia(fullscreenMedia.url, fullscreenMedia.type)} className="bg-white/10 p-3 rounded-full hover:bg-white/20 text-white transition-colors">
+                <Download className="w-6 h-6" />
+              </button>
+              <button onClick={() => setFullscreenMedia(null)} className="bg-white/10 p-3 rounded-full hover:bg-white/20 text-white transition-colors">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            {fullscreenMedia.type === "video" ? (
+              <video src={fullscreenMedia.url} controls autoPlay className="max-w-full max-h-[85vh] rounded-xl shadow-2xl" />
+            ) : (
+              <img src={fullscreenMedia.url} alt="Fullscreen" className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl" />
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
       
       {/* DISCREET BACKGROUND SYNC INDICATOR */}
       <AnimatePresence>
         {isRestoringArchive && (
           <motion.div 
-            initial={{ y: -40, opacity: 0 }} 
-            animate={{ y: 0, opacity: 1 }} 
-            exit={{ y: -40, opacity: 0 }}
+            initial={{ y: -40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -40, opacity: 0 }}
             className="absolute top-16 right-4 z-50 bg-[#202C33]/95 border border-[#F472B6]/40 px-3 py-1.5 rounded-full shadow-2xl flex items-center gap-2 backdrop-blur-md"
           >
             <Loader2 className="w-3.5 h-3.5 text-[#F472B6] animate-spin" />
@@ -446,7 +532,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         )}
       </AnimatePresence>
 
-      {/* Magic Link Top Notification */}
       <AnimatePresence>
         {linkingReplyFor && (
           <motion.div initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -50, opacity: 0 }} className="absolute top-16 left-0 right-0 z-[999] mx-auto w-11/12 md:w-1/2 bg-[#005C4B] text-white px-4 py-3 rounded-2xl shadow-2xl flex justify-between items-center border border-[#00A884]">
@@ -472,6 +557,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
           </div>
         </div>
         <div className="flex items-center gap-3 text-[#8696A0]">
+          <button onClick={() => setShowMusicMenu(!showMusicMenu)} title="Music Vault"><Music className={`w-5 h-5 ${isPlaying ? "text-[#F472B6] animate-pulse" : "hover:text-white"}`} /></button>
           <button onClick={() => setIsSearchingChat(!isSearchingChat)} title="Search Chat"><Search className="w-5 h-5 hover:text-white" /></button>
           <button onClick={() => setShowSettings(!showSettings)} title="Change Wallpaper"><Palette className="w-5 h-5 hover:text-white" /></button>
           <button onClick={exportChat} title="Export Chat"><Download className="w-5 h-5 hover:text-white" /></button>
@@ -479,24 +565,43 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         </div>
       </div>
 
+      {/* Music Player Menu */}
+      <AnimatePresence>
+        {showMusicMenu && (
+          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="absolute top-16 right-16 bg-[#202C33] border border-[#F472B6]/30 p-4 rounded-2xl z-50 shadow-2xl w-72 text-left max-h-[50vh] flex flex-col">
+            <p className="text-xs text-[#F472B6] font-mono mb-3 uppercase tracking-wider font-bold flex items-center gap-2">
+              <Music className="w-4 h-4" /> Vault Music Library
+            </p>
+            {musicTracks.length === 0 ? (
+              <p className="text-xs text-white/50 italic py-4 text-center">No songs found in 'vault_music' Supabase bucket.</p>
+            ) : (
+              <div className="overflow-y-auto space-y-1 flex-1 pr-1">
+                {musicTracks.map((track) => (
+                  <button 
+                    key={track.url} 
+                    onClick={() => togglePlayTrack(track)}
+                    className={`w-full flex items-center justify-between text-xs px-3 py-2.5 rounded-lg text-left transition-colors border ${currentTrack?.url === track.url ? "bg-[#F472B6]/10 border-[#F472B6]/50 text-white font-bold" : "bg-transparent border-transparent text-white/70 hover:bg-white/5"}`}
+                  >
+                    <span className="truncate pr-2">{track.name}</span>
+                    {currentTrack?.url === track.url && isPlaying ? <Pause className="w-4 h-4 text-[#F472B6] flex-shrink-0" /> : <Play className="w-4 h-4 text-white/50 flex-shrink-0 hover:text-white" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* In-Chat Search Bar */}
       <AnimatePresence>
         {isSearchingChat && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="bg-[#1F2C34] px-4 py-2 border-b border-white/5 flex items-center gap-3 z-30 shadow-lg flex-shrink-0">
             <Search className="w-4 h-4 text-[#8696A0]" />
             <input 
-              type="text" 
-              value={chatSearchQuery} 
-              onChange={(e) => setChatSearchQuery(e.target.value)} 
-              placeholder="Search conversation..." 
-              className="flex-1 bg-transparent text-white text-sm focus:outline-none placeholder:text-[#8696A0]" 
-              autoFocus
+              type="text" value={chatSearchQuery} onChange={(e) => setChatSearchQuery(e.target.value)} placeholder="Search conversation..." 
+              className="flex-1 bg-transparent text-white text-sm focus:outline-none placeholder:text-[#8696A0]" autoFocus
             />
-            {matchedIndices.length > 0 && (
-              <span className="text-xs text-[#8696A0] font-mono">
-                {currentMatchIndex + 1} of {matchedIndices.length}
-              </span>
-            )}
+            {matchedIndices.length > 0 && <span className="text-xs text-[#8696A0] font-mono">{currentMatchIndex + 1} of {matchedIndices.length}</span>}
             <div className="flex items-center gap-1">
               <button onClick={handlePrevMatch} disabled={matchedIndices.length === 0} className="text-[#8696A0] hover:text-white p-1 disabled:opacity-30"><ChevronUp className="w-5 h-5" /></button>
               <button onClick={handleNextMatch} disabled={matchedIndices.length === 0} className="text-[#8696A0] hover:text-white p-1 disabled:opacity-30"><ChevronDown className="w-5 h-5" /></button>
@@ -513,9 +618,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
             <p className="text-xs text-[#8696A0] font-mono mb-2 uppercase tracking-wider">Chat Wallpaper</p>
             <div className="space-y-1 mb-3">
               {WALLPAPERS.map(w => (
-                <button key={w.name} onClick={() => { setCurrentBgStyle(w.class); setCustomBgImage(null); setShowSettings(false); }} className="w-full text-xs text-white/90 hover:bg-white/5 px-3 py-2 rounded-lg text-left">
-                  {w.name}
-                </button>
+                <button key={w.name} onClick={() => { setCurrentBgStyle(w.class); setCustomBgImage(null); setShowSettings(false); }} className="w-full text-xs text-white/90 hover:bg-white/5 px-3 py-2 rounded-lg text-left">{w.name}</button>
               ))}
             </div>
             <label className="flex items-center gap-2 w-full bg-white/5 hover:bg-white/10 text-xs text-white px-3 py-2.5 rounded-xl cursor-pointer transition-colors border border-white/10">
@@ -544,26 +647,18 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                   🔒 End-to-End Encrypted Vault
                 </span>
 
-                {/* BIRTHDAY SURPRISE / UNLOCK BANNER */}
                 {!isMemoriesUnlocked && (
-                  <motion.div 
-                    initial={{ scale: 0.95, opacity: 0, y: 10 }}
-                    animate={{ scale: 1, opacity: 1, y: 0 }}
-                    className="w-full max-w-md relative group mt-4 mb-2"
-                  >
+                  <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} className="w-full max-w-md relative group mt-4 mb-2">
                     <div className="absolute -inset-0.5 bg-gradient-to-r from-[#F472B6] to-[#9333EA] rounded-2xl blur opacity-30 group-hover:opacity-60 transition duration-1000 animate-pulse"></div>
-                    
                     <div className="relative bg-[#111B21] border border-[#F472B6]/30 rounded-2xl p-5 text-center shadow-2xl overflow-hidden">
                       <div className="absolute -top-10 -right-10 w-32 h-32 bg-[#9333EA] opacity-10 rounded-full blur-2xl"></div>
                       <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-[#F472B6] opacity-10 rounded-full blur-2xl"></div>
-                      
                       <div className="relative z-10 space-y-4">
                         <div className="flex justify-center">
                           <div className="w-12 h-12 bg-gradient-to-br from-[#9333EA] to-[#F472B6] rounded-full flex items-center justify-center shadow-lg shadow-pink-500/20 mb-1">
                             <Gift className="w-6 h-6 text-white" />
                           </div>
                         </div>
-                        
                         <div>
                           <h3 className="text-transparent bg-clip-text bg-gradient-to-r from-[#F472B6] to-[#D8B4FE] font-bold text-sm uppercase tracking-widest mb-1">
                             A Special Birthday Surprise
@@ -572,10 +667,8 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                             Your recent messages are loaded. But a secured time capsule containing every single memory, late-night conversation, and joke from 2024 to 2026 is waiting for you.
                           </p>
                         </div>
-
                         <button
-                          onClick={handleUnlockMemories}
-                          disabled={isRestoringArchive}
+                          onClick={handleUnlockMemories} disabled={isRestoringArchive}
                           className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-[#9333EA] to-[#F472B6] hover:from-[#7e22ce] hover:to-[#db2777] text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg shadow-pink-500/25 disabled:opacity-50"
                         >
                           {isRestoringArchive ? <Loader2 className="w-4 h-4 animate-spin text-white" /> : <Sparkles className="w-4 h-4 text-white" />}
@@ -597,16 +690,14 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
           itemContent={(index, msg) => {
             const isMe = msg.sender === identity;
             const isGif = msg.media_type === "gif";
+            const isMedia = !!msg.media_url;
             const isHighlighted = matchedIndices[currentMatchIndex] === index;
 
             let reactionDisplay: string[] = [];
             if (msg.reaction) {
-              if (msg.reaction.startsWith("{")) {
-                try {
-                  const parsed = JSON.parse(msg.reaction);
-                  reactionDisplay = Array.from(new Set(Object.values(parsed))) as string[];
-                } catch (e) { reactionDisplay = [msg.reaction]; }
-              } else { reactionDisplay = [msg.reaction]; }
+              try {
+                reactionDisplay = msg.reaction.startsWith("{") ? Array.from(new Set(Object.values(JSON.parse(msg.reaction)))) as string[] : [msg.reaction];
+              } catch (e) { reactionDisplay = [msg.reaction]; }
             }
 
             return (
@@ -615,13 +706,11 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                   onClick={(e) => { 
                     if (linkingReplyFor && linkingReplyFor !== msg.id) {
                       executeMagicLink(msg);
-                    } else {
-                      // Allow toggling menu with a tap on Android
+                    } else if (!isMedia) {
                       setActiveTouchMenu(activeTouchMenu === msg.id ? null : msg.id);
                     }
                   }}
                   onContextMenu={(e) => {
-                    // This enables true WhatsApp-style "Long Press" to open the menu on Android
                     if (!linkingReplyFor) {
                       e.preventDefault();
                       setActiveTouchMenu(msg.id);
@@ -630,35 +719,13 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                   className={`flex flex-col group relative ${isMe ? "items-end" : "items-start"} transition-all duration-300 ${isHighlighted ? "scale-[1.02]" : ""}`}
                 >
                   
-                  {/* MOBILE-OPTIMIZED ACTION BAR: Increased hitbox sizes, guaranteed top layer */}
+                  {/* MOBILE-OPTIMIZED ACTION BAR */}
                   {!msg.deleted && !linkingReplyFor && (
                     <div className={`absolute -top-10 ${isMe ? "right-2" : "left-2"} ${activeTouchMenu === msg.id ? '!flex' : 'hidden md:group-hover:flex'} items-center gap-1 bg-[#202C33] border border-white/10 rounded-full px-2 py-1 z-[999] shadow-2xl transition-all`}>
-                      <button 
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setReplyingTo(msg); setActiveTouchMenu(null); }} 
-                        title="Reply" className="p-2 cursor-pointer"
-                      >
-                        <Reply className="w-4 h-4 text-white/70 hover:text-white" />
-                      </button>
-                      <button 
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setLinkingReplyFor(msg.id); setActiveTouchMenu(null); }} 
-                        title="Link as Reply" className="p-2 cursor-pointer"
-                      >
-                        <Link2 className="w-4 h-4 text-white/70 hover:text-[#00A884]" />
-                      </button>
-                      <button 
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveReactionMenu(activeReactionMenu === msg.id ? null : msg.id); }} 
-                        title="React" className="p-2 cursor-pointer"
-                      >
-                        <SmilePlus className="w-4 h-4 text-white/70 hover:text-white" />
-                      </button>
-                      {isMe && (
-                        <button 
-                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteMessage(msg); setActiveTouchMenu(null); }} 
-                          title="Delete" className="p-2 cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4 text-red-400 hover:text-red-300" />
-                        </button>
-                      )}
+                      <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setReplyingTo(msg); setActiveTouchMenu(null); }} title="Reply" className="p-2 cursor-pointer"><Reply className="w-4 h-4 text-white/70 hover:text-white" /></button>
+                      <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setLinkingReplyFor(msg.id); setActiveTouchMenu(null); }} title="Link as Reply" className="p-2 cursor-pointer"><Link2 className="w-4 h-4 text-white/70 hover:text-[#00A884]" /></button>
+                      <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveReactionMenu(activeReactionMenu === msg.id ? null : msg.id); }} title="React" className="p-2 cursor-pointer"><SmilePlus className="w-4 h-4 text-white/70 hover:text-white" /></button>
+                      {isMe && <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteMessage(msg); setActiveTouchMenu(null); }} title="Delete" className="p-2 cursor-pointer"><Trash2 className="w-4 h-4 text-red-400 hover:text-red-300" /></button>}
                     </div>
                   )}
 
@@ -666,18 +733,11 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                   {activeReactionMenu === msg.id && !msg.deleted && (
                     <div className={`absolute top-8 ${isMe ? "right-0" : "left-0"} bg-[#202C33] border border-white/10 rounded-full px-3 py-2 flex gap-2 z-[999] shadow-2xl`}>
                       {["❤️", "🔥", "😂", "👍", "🥹", "🎉"].map((emoji) => (
-                        <button 
-                          key={emoji} 
-                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); addReaction(msg, emoji); }} 
-                          className="hover:scale-125 transition-transform text-2xl cursor-pointer"
-                        >
-                          {emoji}
-                        </button>
+                        <button key={emoji} onClick={(e) => { e.preventDefault(); e.stopPropagation(); addReaction(msg, emoji); }} className="hover:scale-125 transition-transform text-2xl cursor-pointer">{emoji}</button>
                       ))}
                     </div>
                   )}
 
-                  {/* THE BUBBLE ITSELF */}
                   <div className={`max-w-[85%] md:max-w-[70%] px-3.5 pt-2.5 pb-1.5 rounded-2xl relative shadow-md ${isMe ? "bg-[#005C4B] text-[#E9EDEF] rounded-tr-none" : "bg-[#202C33] text-[#E9EDEF] rounded-tl-none"} ${isHighlighted ? "ring-2 ring-[#00A884] bg-emerald-950" : ""}`}>
                     
                     {msg.reply_to && msg.reply_to.trim() !== "" && (
@@ -687,13 +747,30 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                       </div>
                     )}
 
-                    {isGif && msg.media_url && <img src={msg.media_url} alt="GIF" className="rounded-xl max-w-[240px] max-h-[220px] object-cover my-1" />}
-                    {msg.media_url && !isGif && msg.media_type === "image" && <img src={msg.media_url} alt="Media" className="rounded-xl max-w-full max-h-[280px] object-cover my-1" />}
-                    {msg.media_url && !isGif && msg.media_type === "video" && <video src={msg.media_url} controls className="rounded-xl max-w-full max-h-[280px] object-cover my-1" />}
+                    {/* CLICKABLE FULLSCREEN MEDIA */}
+                    {isGif && msg.media_url && (
+                      <div className="relative cursor-pointer group/img" onClick={() => setFullscreenMedia({ url: msg.media_url!, type: "image" })}>
+                        <img src={msg.media_url} alt="GIF" className="rounded-xl max-w-[240px] max-h-[220px] object-cover my-1" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity rounded-xl flex items-center justify-center"><Maximize className="w-6 h-6 text-white" /></div>
+                      </div>
+                    )}
+                    {msg.media_url && !isGif && msg.media_type === "image" && (
+                      <div className="relative cursor-pointer group/img" onClick={() => setFullscreenMedia({ url: msg.media_url!, type: "image" })}>
+                        <img src={msg.media_url} alt="Media" className="rounded-xl max-w-full max-h-[280px] object-cover my-1" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity rounded-xl flex items-center justify-center"><Maximize className="w-6 h-6 text-white" /></div>
+                      </div>
+                    )}
+                    {msg.media_url && !isGif && msg.media_type === "video" && (
+                      <div className="relative cursor-pointer group/img">
+                        <video src={msg.media_url} controls className="rounded-xl max-w-full max-h-[280px] object-cover my-1 z-10 relative" />
+                        <button onClick={(e) => { e.preventDefault(); setFullscreenMedia({ url: msg.media_url!, type: "video" })}} className="absolute top-2 right-2 bg-black/50 p-1.5 rounded-md z-20 hover:bg-black/80"><Maximize className="w-4 h-4 text-white" /></button>
+                      </div>
+                    )}
+                    
                     {msg.text && !isGif && !msg.media_url && <p className="text-[14px] leading-relaxed break-words whitespace-pre-wrap">{msg.text}</p>}
 
                     {reactionDisplay.length > 0 && !msg.deleted && (
-                      <motion.div initial={{ scale: 0, opacity: 0, y: 15 }} animate={{ scale: 1, opacity: 1, y: 0 }} transition={{ type: "spring", stiffness: 400, damping: 15 }} className="absolute -bottom-2 right-2 bg-[#202C33] border border-white/20 rounded-full px-2 py-0.5 text-xs shadow-2xl z-10 flex items-center gap-1">
+                      <motion.div initial={{ scale: 0, opacity: 0, y: 15 }} animate={{ scale: 1, opacity: 1, y: 0 }} className="absolute -bottom-2 right-2 bg-[#202C33] border border-white/20 rounded-full px-2 py-0.5 text-xs shadow-2xl z-10 flex items-center gap-1">
                         {reactionDisplay.map((emoji, idx) => <span key={idx}>{emoji}</span>)}
                       </motion.div>
                     )}
@@ -701,13 +778,8 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                     <div className="flex items-center justify-end gap-1.5 mt-0.5 opacity-70">
                       <span className="text-[10px] font-mono">{formatTime(msg.created_at)}</span>
                       {isMe && <CheckCheck className={`w-3.5 h-3.5 ${partnerOnline ? "text-[#53bdeb]" : "text-white/40"}`} />}
-                      
-                      {/* NEW: Explicit Mobile Chevron Button */}
                       {!msg.deleted && !linkingReplyFor && (
-                        <button 
-                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveTouchMenu(activeTouchMenu === msg.id ? null : msg.id); }}
-                          className="md:hidden ml-1 p-0.5 cursor-pointer"
-                        >
+                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveTouchMenu(activeTouchMenu === msg.id ? null : msg.id); }} className="md:hidden ml-1 p-0.5 cursor-pointer">
                           <ChevronDown className="w-3.5 h-3.5 text-white/60" />
                         </button>
                       )}
@@ -749,7 +821,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         )}
       </AnimatePresence>
 
-      {/* Full Emoji & Giphy Drawer */}
+      {/* Emoji Drawer */}
       <AnimatePresence>
         {pickerTab && (
           <motion.div initial={{ height: 0 }} animate={{ height: 320 }} exit={{ height: 0 }} className="bg-[#1F2C34] border-t border-white/5 flex flex-col overflow-hidden flex-shrink-0">
@@ -771,14 +843,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
               <div className="px-3 pt-2 flex-shrink-0">
                 <div className="bg-[#2A3942] rounded-lg px-3 py-1.5 flex items-center gap-2">
                   <Search className="w-4 h-4 text-[#8696A0]" />
-                  <input 
-                    type="text" 
-                    value={gifSearch} 
-                    onChange={(e) => setGifSearch(e.target.value)} 
-                    placeholder="Search millions of live GIFs..." 
-                    className="bg-transparent text-white text-xs w-full focus:outline-none placeholder:text-[#8696A0]" 
-                    autoFocus
-                  />
+                  <input type="text" value={gifSearch} onChange={(e) => setGifSearch(e.target.value)} placeholder="Search millions of live GIFs..." className="bg-transparent text-white text-xs w-full focus:outline-none placeholder:text-[#8696A0]" autoFocus />
                 </div>
               </div>
             )}
@@ -810,8 +875,8 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         )}
       </AnimatePresence>
 
-      {/* Input Bar */}
-      <form onSubmit={(e) => { e.preventDefault(); sendMessage(newMessage); }} className="bg-[#202C33] px-3 py-3 flex items-center gap-2 border-t border-[#2A3942] z-20 flex-shrink-0">
+      {/* Smart Input Bar with Safe Area Support */}
+      <form onSubmit={(e) => { e.preventDefault(); sendMessage(newMessage); }} className="bg-[#202C33] px-3 py-3 flex items-center gap-2 border-t border-[#2A3942] z-20 flex-shrink-0 pb-[max(12px,env(safe-area-inset-bottom))]">
         <button type="button" onClick={() => setPickerTab(pickerTab === "emoji" ? null : "emoji")} className="text-[#8696A0] hover:text-white p-2"><Smile className="w-6 h-6" /></button>
         <button type="button" onClick={() => setPickerTab(pickerTab === "gif" ? null : "gif")} className="text-[#8696A0] hover:text-white p-2 text-xs font-bold border border-[#8696A0] rounded px-1.5 py-0.5">GIF</button>
         <label className="text-[#8696A0] hover:text-white p-2 cursor-pointer" title="Send Photo/Video">
