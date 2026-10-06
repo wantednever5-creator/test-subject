@@ -22,7 +22,7 @@ const getDeterministicArray = (count: number) => {
 
 const SVGAAmongUs = () => (
   <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-[0_0_15px_rgba(147,51,234,0.6)]">
-    {/* Purple Bean (Onegame) */}
+    {/* Purple Bean (Kripton) */}
     <motion.g animate={{ y: [-3, 3, -3], rotate: [-2, 2, -2] }} transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}>
       <rect x="10" y="50" width="12" height="25" rx="6" fill="#6D28D9" /> 
       <rect x="20" y="40" width="35" height="45" rx="15" fill="#7C3AED" /> 

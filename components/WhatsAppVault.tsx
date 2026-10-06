@@ -64,7 +64,7 @@ const WALLPAPERS = [
 ];
 
 export default function WhatsAppVault({ identity, onClose }: { identity: string; onClose: () => void }) {
-  const partnerName = identity === "Onegame" ? "Moon" : "Onegame";
+  const partnerName = identity === "Kripton" ? "Moon" : "Kripton";
   
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");

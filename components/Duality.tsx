@@ -14,7 +14,7 @@ const getParticles = (count: number) => Array.from({ length: count }).map((_, i)
 }));
 
 // --- CUTE SHIT: THE LONELY LOGICAL BEAN ---
-const SVGLonelyOnegame = () => (
+const SVGLonelyKripton = () => (
   <svg viewBox="0 0 200 200" className="w-full h-full max-w-[300px] md:max-w-[400px] drop-shadow-[0_0_30px_rgba(6,182,212,0.4)] overflow-visible">
     {/* Cold Rain / Data Streams */}
     {[1, 2, 3, 4, 5].map(i => (
@@ -37,7 +37,7 @@ const SVGLonelyOnegame = () => (
       <rect x="20" y="3" width="2" height="4" fill="#EF4444" />
     </motion.g>
 
-    {/* Purple Bean (Onegame) - Sitting alone, slouched */}
+    {/* Purple Bean (Kripton) - Sitting alone, slouched */}
     <motion.g animate={{ y: [0, 3, 0] }} transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}>
       <rect x="85" y="110" width="12" height="30" rx="6" fill="#4C1D95" /> {/* Backpack */}
       <path d="M 80 150 Q 100 160 120 150 L 120 100 C 120 80 80 80 80 100 Z" fill="#6D28D9" /> {/* Slouched Body */}
@@ -63,12 +63,12 @@ const SVGHumanEmpire = () => (
 
     {/* Purple & Pink Beans Holding Hands */}
     <motion.g animate={{ y: [-4, 4, -4] }} transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}>
-      {/* Onegame (Purple) */}
+      {/* Kripton (Purple) */}
       <rect x="50" y="110" width="10" height="25" rx="5" fill="#6D28D9" /> 
       <rect x="60" y="100" width="30" height="40" rx="15" fill="#7C3AED" />
       <rect x="70" y="105" width="15" height="10" rx="5" fill="#93C5FD" stroke="#1E3A8A" strokeWidth="2" />
       
-      {/* Floating Crown over Onegame (Empire Building) */}
+      {/* Floating Crown over Kripton (Empire Building) */}
       <motion.path d="M 65 85 L 70 70 L 75 80 L 80 70 L 85 85 Z" fill="#FDE047" stroke="#CA8A04" strokeWidth="1.5"
         animate={{ y: [-3, 3, -3], rotate: [-10, 10, -10] }} transition={{ duration: 3, repeat: Infinity }} />
       
@@ -202,7 +202,7 @@ export default function Duality() {
               >
                 {/* SVG Visual Anchor */}
                 <motion.div variants={itemVariants} className="w-full lg:w-1/2 flex justify-center">
-                  <SVGLonelyOnegame />
+                  <SVGLonelyKripton />
                 </motion.div>
                 
                 {/* Text Content */}

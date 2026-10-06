@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { Heart, ArrowDown, Sparkles } from "lucide-react";
 
 // --- CUSTOM SVG ANIMATED AVATARS ---
-const OnegameAvatar = ({ delay = 0 }: { delay?: number }) => (
+const KriptonAvatar = ({ delay = 0 }: { delay?: number }) => (
   <motion.div initial={{ x: -150, opacity: 0 }} animate={{ x: 0, opacity: 1, y: [0, -5, 0] }} transition={{ x: { duration: 2, delay, ease: "easeOut" }, y: { duration: 3, repeat: Infinity, ease: "easeInOut" } }} className="relative w-24 h-32 md:w-32 md:h-40 z-10">
     <div className="absolute inset-0 bg-[#7C3AED] blur-[40px] opacity-30 rounded-full animate-pulse"></div>
     <svg viewBox="0 0 100 120" className="w-full h-full relative z-10 drop-shadow-[0_0_15px_rgba(147,51,234,0.5)]">
@@ -53,7 +53,7 @@ export default function HeroGroup() {
       <section className="relative min-h-screen flex flex-col items-center justify-center px-4 z-10 pt-20 pb-32">
         <motion.div className="flex flex-col items-center gap-12 w-full max-w-5xl">
           <div className="flex items-center justify-center relative w-full h-40">
-            <div className="absolute left-1/2 -translate-x-[120%]"><OnegameAvatar delay={0.5} /></div>
+            <div className="absolute left-1/2 -translate-x-[120%]"><KriptonAvatar delay={0.5} /></div>
             <motion.div 
               initial={{ scale: 0, opacity: 0, y: 20 }} 
               animate={{ scale: 1, opacity: 1, y: 0 }} 
@@ -66,7 +66,7 @@ export default function HeroGroup() {
           </div>
 
           <motion.div initial="hidden" animate="show" variants={staggerContainer} className="text-center mt-12">
-            <motion.p variants={fadeUp} className="text-[10px] md:text-xs tracking-[0.5em] uppercase text-white/40 mb-6">Onegame & Moon</motion.p>
+            <motion.p variants={fadeUp} className="text-[10px] md:text-xs tracking-[0.5em] uppercase text-white/40 mb-6">Kripton & Moon</motion.p>
             <motion.h1 variants={fadeUp} className="text-6xl md:text-8xl font-bold tracking-tighter uppercase text-transparent bg-clip-text bg-gradient-to-br from-white via-[#F472B6] to-[#9333EA] pb-2 leading-none drop-shadow-2xl">
               MA MOON!!!!
             </motion.h1>
@@ -90,7 +90,7 @@ export default function HeroGroup() {
           
           <div className="grid md:grid-cols-2 gap-16 items-center">
             <motion.div variants={fadeUp} className="space-y-8 text-lg md:text-xl text-white/70 font-light leading-relaxed">
-              <p>It started on Among Us. I was Onegame, you were Moon. Private lobbies, hours of talking, no games played. I took a long time to say it, but when I finally said 'I love you', everything changed.</p>
+              <p>It started on Among Us. I was Kripton, you were Moon. Private lobbies, hours of talking, no games played. I took a long time to say it, but when I finally said 'I love you', everything changed.</p>
               <p>Then the guilt hit you. You confessed you weren't in 11th grade, but 10th. You thought I'd be furious.</p>
             </motion.div>
             
