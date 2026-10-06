@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { KeyRound, AlertCircle } from "lucide-react";
+import { KeyRound, AlertCircle, MessageCircle } from "lucide-react";
 
 import HeroGroup from "../components/HeroGroup";
 import InsideJokes from "../components/InsideJokes";
@@ -12,6 +12,7 @@ import EmotionalReset from "../components/EmotionalReset";
 import Constellation from "../components/Constellation";
 import BackgroundAudio from "../components/BackgroundAudio";
 import Ending from "../components/Ending";
+import WhatsAppVault from "../components/WhatsAppVault"; // <-- Import the Chat Vault
 
 // ==========================================
 // 🔒 ENTRANCE CREDENTIALS
@@ -27,8 +28,8 @@ export default function MasterVault() {
   const [inputPass, setInputPass] = useState("");
   const [loginError, setLoginError] = useState(false);
   const [identity, setIdentity] = useState<"Kripton" | "Moon" | null>(null);
+  const [quickVaultOpen, setQuickVaultOpen] = useState(false); // Quick shortcut state
 
-  // Force scroll to absolute top of the page when she unlocks the site
   useEffect(() => {
     if (siteUnlocked) {
       window.scrollTo(0, 0);
@@ -94,7 +95,7 @@ export default function MasterVault() {
     );
   }
 
-  // --- THE ASSEMBLED MASTERPIECE (Only visible after login) ---
+  // --- THE ASSEMBLED MASTERPIECE ---
   return (
     <main className="relative bg-[#050505] text-white selection:bg-[#F472B6]/30 selection:text-[#F472B6] overflow-x-hidden font-sans">
       <div className="fixed inset-0 z-0 pointer-events-none bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#9333EA]/5 via-[#050505] to-[#050505]"></div>
@@ -102,13 +103,28 @@ export default function MasterVault() {
       <BackgroundAudio />
       
       <div className="relative z-10">
+        {/* THE QUICK ACCESS SHORTCUT */}
+        <motion.button 
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          onClick={() => setQuickVaultOpen(true)}
+          className="fixed top-6 right-6 z-[9000] bg-[#202C33]/80 backdrop-blur-md border border-[#00A884]/50 text-[#00A884] px-4 py-2.5 rounded-full font-mono text-xs flex items-center gap-2 shadow-xl hover:bg-[#00A884] hover:text-black transition-colors"
+        >
+          <MessageCircle className="w-4 h-4" /> Quick Chat
+        </motion.button>
+
+        <AnimatePresence>
+          {quickVaultOpen && identity && (
+            <WhatsAppVault identity={identity} onClose={() => setQuickVaultOpen(false)} />
+          )}
+        </AnimatePresence>
+
         <HeroGroup />
         <InsideJokes />
         <Distance />
         <Duality />
         <EmotionalReset />
         <Constellation />
-        {/* Pass the identity down to Ending so it knows who is logging into the Vault */}
         <Ending identity={identity!} />
       </div>
     </main>
