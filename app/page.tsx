@@ -19,7 +19,7 @@ import WhatsAppVault from "../components/WhatsAppVault"; // <-- Import the Chat 
 // ==========================================
 const SECRETS = {
   MOON: { id: "moon", pass: "onegame" },
-  KRIPTON: { id: "onegame", pass: "Onegame@1503S" }
+  Onegame: { id: "onegame", pass: "Onegame@1503S" }
 };
 
 export default function MasterVault() {
@@ -27,7 +27,7 @@ export default function MasterVault() {
   const [inputId, setInputId] = useState("");
   const [inputPass, setInputPass] = useState("");
   const [loginError, setLoginError] = useState(false);
-  const [identity, setIdentity] = useState<"Kripton" | "Moon" | null>(null);
+  const [identity, setIdentity] = useState<"Onegame" | "Moon" | null>(null);
   const [quickVaultOpen, setQuickVaultOpen] = useState(false); // Quick shortcut state
 
   useEffect(() => {
@@ -42,8 +42,8 @@ export default function MasterVault() {
     if (inputId.toLowerCase() === SECRETS.MOON.id && inputPass === SECRETS.MOON.pass) {
       setIdentity("Moon");
       setSiteUnlocked(true);
-    } else if (inputId.toLowerCase() === SECRETS.KRIPTON.id && inputPass === SECRETS.KRIPTON.pass) {
-      setIdentity("Kripton");
+    } else if (inputId.toLowerCase() === SECRETS.Onegame.id && inputPass === SECRETS.Onegame.pass) {
+      setIdentity("Onegame");
       setSiteUnlocked(true);
     } else {
       setLoginError(true);

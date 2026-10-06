@@ -256,7 +256,7 @@ export default function Constellation() {
                   <span>Coordinates Locked: Delhi // Jaipur</span>
                   <div className="flex items-center gap-3 text-[#F472B6] bg-[#F472B6]/10 px-6 py-2.5 rounded-full border border-[#F472B6]/30">
                     <Heart className="w-4 h-4 fill-current animate-pulse" />
-                    <span className="font-semibold text-white">Kripton & Moon</span>
+                    <span className="font-semibold text-white">Onegame & Moon</span>
                   </div>
                 </div>
 

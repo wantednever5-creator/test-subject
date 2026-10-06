@@ -102,7 +102,7 @@ const SVGCakeScene = ({ onOpenVault }: { onOpenVault: () => void }) => {
         )}
       </AnimatePresence>
 
-      {/* KRIPTON (Enters from left, claps) */}
+      {/* Onegame (Enters from left, claps) */}
       <AnimatePresence>
         {seqStep >= 3 && (
           <motion.div className="absolute bottom-10 left-[5%] md:left-[15%] z-20"
