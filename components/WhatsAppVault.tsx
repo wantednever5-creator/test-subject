@@ -7,7 +7,7 @@ import {
   Smile, Send, CheckCheck, X, Trash2, Reply, SmilePlus, 
   Image as ImageIcon, Download, Palette, ArrowLeft, Search, 
   Upload, ChevronUp, ChevronDown, Loader2, Link2, Sparkles, 
-  Lock, Unlock, ArrowDown, Database, Gift, Maximize
+  Lock, Unlock, ArrowDown, Gift, Maximize
 } from "lucide-react";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
@@ -64,6 +64,7 @@ const WALLPAPERS = [
 ];
 
 export default function WhatsAppVault({ identity, onClose }: { identity: string; onClose: () => void }) {
+  // Restore the identity checks to match your database!
   const partnerName = identity === "Kripton" ? "Moon" : "Kripton";
   
   const [messages, setMessages] = useState<Message[]>([]);
@@ -102,7 +103,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
 
-  // 1. Android Viewport Safe-Area Scaling
   useEffect(() => {
     setViewportHeight(window.innerHeight);
     const handleResize = () => {
@@ -445,9 +445,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   const formatTime = (isoString: string) => new Date(isoString).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 
   return (
-    // FULLSCREEN BACKGROUND LOCK - Prevents any underlying content from showing
     <div className="fixed inset-0 z-[99999] bg-[#0B141A] overflow-hidden">
-      {/* DYNAMIC VIEWPORT CONTAINER - Shrinks specifically for the Android keyboard */}
       <div 
         className="flex flex-col w-full mx-auto relative"
         style={{ height: viewportHeight ? `${viewportHeight}px` : "100dvh" }}
@@ -500,7 +498,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
           )}
         </AnimatePresence>
 
-        {/* WhatsApp Header */}
+        {/* WhatsApp Header (Removed Music Icon) */}
         <div className="bg-[#202C33] px-4 py-3 flex justify-between items-center border-b border-[#2A3942] z-30 shadow-md flex-shrink-0">
           <div className="flex items-center gap-3">
             <button onClick={onClose} className="text-[#8696A0] hover:text-white mr-1"><ArrowLeft className="w-6 h-6" /></button>

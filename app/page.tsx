@@ -12,14 +12,14 @@ import EmotionalReset from "../components/EmotionalReset";
 import Constellation from "../components/Constellation";
 import BackgroundAudio from "../components/BackgroundAudio";
 import Ending from "../components/Ending";
-import WhatsAppVault from "../components/WhatsAppVault"; // <-- Import the Chat Vault
+import WhatsAppVault from "../components/WhatsAppVault"; 
 
 // ==========================================
 // 🔒 ENTRANCE CREDENTIALS
 // ==========================================
 const SECRETS = {
   MOON: { id: "moon", pass: "onegame" },
-  KRIPTON: { id: "onegame", pass: "Onegame@1503S" }
+  KRIPTON: { id: "onegame", pass: "Onegame@1503S" } // Your new Login ID
 };
 
 export default function MasterVault() {
@@ -28,7 +28,7 @@ export default function MasterVault() {
   const [inputPass, setInputPass] = useState("");
   const [loginError, setLoginError] = useState(false);
   const [identity, setIdentity] = useState<"Kripton" | "Moon" | null>(null);
-  const [quickVaultOpen, setQuickVaultOpen] = useState(false); // Quick shortcut state
+  const [quickVaultOpen, setQuickVaultOpen] = useState(false);
 
   useEffect(() => {
     if (siteUnlocked) {
@@ -39,11 +39,13 @@ export default function MasterVault() {
   const handleSiteLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(false);
+    
     if (inputId.toLowerCase() === SECRETS.MOON.id && inputPass === SECRETS.MOON.pass) {
       setIdentity("Moon");
       setSiteUnlocked(true);
     } else if (inputId.toLowerCase() === SECRETS.KRIPTON.id && inputPass === SECRETS.KRIPTON.pass) {
-      setIdentity("Kripton");
+      // We log you in as "Kripton" internally so your old messages match!
+      setIdentity("Kripton"); 
       setSiteUnlocked(true);
     } else {
       setLoginError(true);
@@ -51,7 +53,6 @@ export default function MasterVault() {
     }
   };
 
-  // --- THE STRICT LOGIN LOCKSCREEN ---
   if (!siteUnlocked) {
     return (
       <div className="fixed inset-0 z-[99999] bg-[#050505] flex items-center justify-center p-4 font-sans">
@@ -95,7 +96,6 @@ export default function MasterVault() {
     );
   }
 
-  // --- THE ASSEMBLED MASTERPIECE ---
   return (
     <main className="relative bg-[#050505] text-white selection:bg-[#F472B6]/30 selection:text-[#F472B6] overflow-x-hidden font-sans">
       <div className="fixed inset-0 z-0 pointer-events-none bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#9333EA]/5 via-[#050505] to-[#050505]"></div>
@@ -103,11 +103,8 @@ export default function MasterVault() {
       <BackgroundAudio />
       
       <div className="relative z-10">
-        {/* THE QUICK ACCESS SHORTCUT */}
         <motion.button 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          onClick={() => setQuickVaultOpen(true)}
+          initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} onClick={() => setQuickVaultOpen(true)}
           className="fixed top-6 right-6 z-[9000] bg-[#202C33]/80 backdrop-blur-md border border-[#00A884]/50 text-[#00A884] px-4 py-2.5 rounded-full font-mono text-xs flex items-center gap-2 shadow-xl hover:bg-[#00A884] hover:text-black transition-colors"
         >
           <MessageCircle className="w-4 h-4" /> Quick Chat
