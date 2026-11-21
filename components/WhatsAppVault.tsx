@@ -12,6 +12,8 @@ import {
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 const GIPHY_API_KEY = "m8EagdbaKHSgg529mP9wVp1qenRWNMkp";
+const START_INDEX = 100000;
+const PAGE_SIZE = 35;
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || "",
@@ -28,6 +30,15 @@ type Message = {
   deleted?: boolean;
   media_url?: string | null;
   media_type?: string | null;
+};
+
+type VirtuosoContext = {
+  isLoadingOlder: boolean;
+  isMemoriesUnlocked: boolean;
+  hasMoreRecent: boolean;
+  hasMoreArchive: boolean;
+  messagesCount: number;
+  onUnlockMemories: () => void;
 };
 
 const EMOJI_CATEGORIES = {
@@ -95,10 +106,105 @@ const renderFormattedText = (text: string) => {
   );
 };
 
+// Stable Header component outside render loop so typing never causes Virtuoso layout jitter
+const VaultHeader = ({ context }: { context?: VirtuosoContext }) => {
+  if (!context) return null;
+  const {
+    isLoadingOlder,
+    isMemoriesUnlocked,
+    hasMoreRecent,
+    hasMoreArchive,
+    messagesCount,
+    onUnlockMemories
+  } = context;
+
+  const canStillScrollUp = isMemoriesUnlocked ? hasMoreArchive : hasMoreRecent;
+
+  return (
+    <div className="flex flex-col items-center justify-center my-5 space-y-3 px-4">
+      {isLoadingOlder && (
+        <div className="flex items-center gap-2 bg-[#121a22]/90 border border-white/10 text-white/70 text-[11px] font-mono px-3.5 py-1.5 rounded-full shadow-md">
+          <Loader2 className="w-3.5 h-3.5 text-[#00c896] animate-spin" />
+          Loading older messages...
+        </div>
+      )}
+
+      {!isLoadingOlder && !canStillScrollUp && (
+        <span className="bg-[#111922]/85 backdrop-blur-md border border-white/[0.06] text-white/45 text-[10px] px-3.5 py-1 rounded-full uppercase tracking-widest shadow-sm">
+          🔒 End-to-End Encrypted Vault
+        </span>
+      )}
+
+      {/* Show Birthday Surprise once user reaches the top of the 48h window */}
+      {!isMemoriesUnlocked && !hasMoreRecent && (
+        <motion.div
+          initial={{ scale: 0.96, opacity: 0, y: 8 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          className="w-full max-w-md relative group mt-2 mb-2"
+        >
+          <div className="absolute -inset-0.5 bg-gradient-to-r from-[#F472B6] to-[#9333EA] rounded-3xl blur opacity-25 group-hover:opacity-50 transition duration-1000 animate-pulse" />
+          <div className="relative bg-[#0f1620]/95 backdrop-blur-xl border border-[#F472B6]/30 rounded-3xl p-5 text-center shadow-2xl overflow-hidden">
+            <div className="absolute -top-10 -right-10 w-32 h-32 bg-[#9333EA] opacity-15 rounded-full blur-2xl" />
+            <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-[#F472B6] opacity-15 rounded-full blur-2xl" />
+            <div className="relative z-10 space-y-3.5">
+              <div className="flex justify-center">
+                <div className="w-12 h-12 bg-gradient-to-br from-[#9333EA] to-[#F472B6] rounded-2xl flex items-center justify-center shadow-lg shadow-pink-500/25">
+                  <Gift className="w-6 h-6 text-white" />
+                </div>
+              </div>
+              <div>
+                <h3 className="text-transparent bg-clip-text bg-gradient-to-r from-[#F472B6] to-[#D8B4FE] font-bold text-sm uppercase tracking-widest mb-1">
+                  A Special Birthday Surprise
+                </h3>
+                <p className="text-[11px] text-white/55 leading-relaxed px-2">
+                  Your recent messages are loaded. A secured time capsule containing every memory, late-night conversation, and joke from 2024 to 2026 is waiting for you.
+                </p>
+              </div>
+              <button
+                onClick={onUnlockMemories}
+                disabled={isLoadingOlder}
+                className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-[#9333EA] to-[#F472B6] hover:opacity-95 text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg shadow-pink-500/25 disabled:opacity-50"
+              >
+                {isLoadingOlder ? <Loader2 className="w-4 h-4 animate-spin text-white" /> : <Sparkles className="w-4 h-4 text-white" />}
+                {isLoadingOlder ? "Unwrapping Memories..." : "Unwrap Memories (2024–2026)"}
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {isMemoriesUnlocked && !hasMoreArchive && (
+        <div className="flex items-center gap-1.5 text-[#F472B6] text-[11px] font-mono bg-[#F472B6]/10 border border-[#F472B6]/30 px-3.5 py-1 rounded-full backdrop-blur-md">
+          <Gift className="w-3.5 h-3.5" /> Beginning of Time Capsule ({messagesCount.toLocaleString()} loaded)
+        </div>
+      )}
+    </div>
+  );
+};
+
+const VaultFooter = () => <div className="h-3" />;
+
 export default function WhatsAppVault({ identity, onClose }: { identity: string; onClose: () => void }) {
   const partnerName = identity === "Kripton" ? "Moon" : "Kripton";
 
-  const [messages, setMessages] = useState<Message[]>([]);
+  // Single atomic state keeps `items` and `firstItemIndex` 100% in sync during prepends
+  const [chatState, setChatState] = useState<{
+    items: Message[];
+    firstItemIndex: number;
+  }>({
+    items: [],
+    firstItemIndex: START_INDEX
+  });
+
+  const messages = chatState.items;
+  const firstItemIndex = chatState.firstItemIndex;
+
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [isMemoriesUnlocked, setIsMemoriesUnlocked] = useState(false);
+  const [hasMoreRecent, setHasMoreRecent] = useState(true);
+  const [hasMoreArchive, setHasMoreArchive] = useState(true);
+
   const [newMessage, setNewMessage] = useState("");
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [pickerTab, setPickerTab] = useState<"emoji" | "gif" | null>(null);
@@ -106,11 +212,10 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   const [fullscreenMedia, setFullscreenMedia] = useState<{ url: string; type: string } | null>(null);
 
-  const [isMemoriesUnlocked, setIsMemoriesUnlocked] = useState(false);
-  const [isRestoringArchive, setIsRestoringArchive] = useState(false);
-  const [restoredCount, setRestoredCount] = useState(0);
-
+  // Scroll & Unread Protection State
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
   const [gifSearch, setGifSearch] = useState("");
   const [giphyResults, setGiphyResults] = useState<{ id: string; title: string; url: string }[]>([]);
   const [isFetchingGifs, setIsFetchingGifs] = useState(false);
@@ -134,6 +239,51 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   const [currentMatchIndex, setCurrentMatchIndex] = useState<number>(-1);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+
+  // Refs for race-free async guards and scroll locking
+  const cutoffRef = useRef<string>(new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString());
+  const messagesRef = useRef<Message[]>([]);
+  const isAtBottomRef = useRef<boolean>(true);
+  const isLoadingOlderRef = useRef<boolean>(false);
+  const isMemoriesUnlockedRef = useRef<boolean>(false);
+  const hasMoreRecentRef = useRef<boolean>(true);
+  const hasMoreArchiveRef = useRef<boolean>(true);
+  const canPaginateRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  // Atomic merge: deduplicates, sorts strictly chronologically, and preserves scroll offset on prepends
+  const mergeMessages = useCallback((incoming: Message[]) => {
+    if (!incoming || incoming.length === 0) return;
+
+    setChatState((prev) => {
+      const map = new Map<string, Message>();
+      for (const m of prev.items) map.set(m.id, m);
+      for (const m of incoming) map.set(m.id, m);
+
+      const sorted = Array.from(map.values()).sort((a, b) => {
+        const diff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        if (diff !== 0) return diff;
+        return String(a.id).localeCompare(String(b.id));
+      });
+
+      const prevFirstId = prev.items[0]?.id;
+      let prependedCount = 0;
+      if (prevFirstId) {
+        const newIndexOfPrevFirst = sorted.findIndex((m) => m.id === prevFirstId);
+        if (newIndexOfPrevFirst > 0) {
+          prependedCount = newIndexOfPrevFirst;
+        }
+      }
+
+      return {
+        items: sorted,
+        firstItemIndex: Math.max(0, prev.firstItemIndex - prependedCount)
+      };
+    });
+  }, []);
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -166,43 +316,127 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     } catch (_) {}
   };
 
-  const syncMissedMessages = useCallback(async () => {
-    const { data } = await supabase
-      .from("secret_chat")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(100);
-
-    if (data) {
-      setMessages((prev) => {
-        const newMsgs = data.reverse();
-        const combined = [...prev, ...newMsgs];
-        const seen = new Set<string>();
-        return combined.filter((m) => {
-          if (seen.has(m.id)) return false;
-          seen.add(m.id);
-          return true;
-        });
-      });
-    }
-  }, []);
-
-  const loadRecentOnly = useCallback(async () => {
-    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  // 1. INITIAL LOAD: Fetch ONLY the newest 35 messages within the 48-hour window
+  const loadInitialMessages = useCallback(async () => {
+    setIsInitialLoading(true);
     const { data, error } = await supabase
       .from("secret_chat")
       .select("*")
-      .gte("created_at", fortyEightHoursAgo)
-      .order("created_at", { ascending: true });
+      .gte("created_at", cutoffRef.current)
+      .order("created_at", { ascending: false })
+      .limit(PAGE_SIZE);
 
     if (!error && data) {
-      setMessages(data);
-      setTimeout(() => virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" }), 180);
+      const moreInWindow = data.length === PAGE_SIZE;
+      hasMoreRecentRef.current = moreInWindow;
+      setHasMoreRecent(moreInWindow);
+      mergeMessages(data);
     }
-  }, []);
+
+    setIsInitialLoading(false);
+    // Delay enabling `startReached` slightly so Virtuoso settles at the bottom first
+    setTimeout(() => {
+      canPaginateRef.current = true;
+    }, 450);
+  }, [mergeMessages]);
+
+  // 2. LAZY LOAD OLDER: Fetches 35 older messages above the current oldest message as user scrolls up
+  const loadOlderMessages = useCallback(
+    async (forceUnlockMode = false) => {
+      const unlocked = forceUnlockMode || isMemoriesUnlockedRef.current;
+
+      if (isLoadingOlderRef.current) return;
+      if (!forceUnlockMode && !canPaginateRef.current) return;
+      if (!unlocked && !hasMoreRecentRef.current) return;
+      if (unlocked && !hasMoreArchiveRef.current) return;
+
+      isLoadingOlderRef.current = true;
+      setIsLoadingOlder(true);
+
+      const oldestMsg = messagesRef.current[0];
+
+      let query = supabase
+        .from("secret_chat")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(PAGE_SIZE);
+
+      if (oldestMsg) {
+        query = query.lt("created_at", oldestMsg.created_at);
+      } else if (unlocked) {
+        // 48h window was empty; pull older messages prior to cutoff
+        query = query.lt("created_at", cutoffRef.current);
+      }
+
+      if (!unlocked) {
+        query = query.gte("created_at", cutoffRef.current);
+      }
+
+      const { data, error } = await query;
+
+      if (!error && data) {
+        if (!unlocked) {
+          if (data.length < PAGE_SIZE) {
+            hasMoreRecentRef.current = false;
+            setHasMoreRecent(false);
+          }
+        } else {
+          if (data.length < PAGE_SIZE) {
+            hasMoreArchiveRef.current = false;
+            setHasMoreArchive(false);
+          }
+        }
+
+        if (data.length > 0) {
+          mergeMessages(data);
+        }
+      }
+
+      isLoadingOlderRef.current = false;
+      setIsLoadingOlder(false);
+    },
+    [mergeMessages]
+  );
+
+  // 3. UNLOCK MEMORIES: Removes the 48h wall and loads the first 35 archived messages smoothly
+  const handleUnlockMemories = useCallback(async () => {
+    if (isMemoriesUnlockedRef.current) return;
+    isMemoriesUnlockedRef.current = true;
+    setIsMemoriesUnlocked(true);
+    canPaginateRef.current = true;
+    await loadOlderMessages(true);
+  }, [loadOlderMessages]);
+
+  // 4. WAKE-FROM-SLEEP SYNC: Only fetches messages NEWER than our latest loaded message
+  const syncMissedMessages = useCallback(async () => {
+    const latestMsg = messagesRef.current[messagesRef.current.length - 1];
+    let query = supabase
+      .from("secret_chat")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(PAGE_SIZE);
+
+    if (latestMsg) {
+      query = query.gt("created_at", latestMsg.created_at);
+    } else {
+      query = query.gte("created_at", cutoffRef.current);
+    }
+
+    const { data, error } = await query;
+    if (!error && data && data.length > 0) {
+      const existingIds = new Set(messagesRef.current.map((m) => m.id));
+      const newFromPartner = data.filter((m) => !existingIds.has(m.id) && m.sender !== identity);
+
+      mergeMessages(data);
+
+      if (!isAtBottomRef.current && newFromPartner.length > 0) {
+        setUnreadCount((c) => c + newFromPartner.length);
+      }
+    }
+  }, [identity, mergeMessages]);
 
   useEffect(() => {
-    loadRecentOnly();
+    loadInitialMessages();
 
     const fetchLastSeen = async () => {
       const { data } = await supabase
@@ -218,25 +452,44 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
       .channel("secret_chat_channel")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "secret_chat" }, (payload) => {
         const incoming = payload.new as Message;
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === incoming.id)) return prev;
-          return [...prev, incoming];
-        });
+        const alreadyExists = messagesRef.current.some((m) => m.id === incoming.id);
 
-        if (incoming.sender !== identity) {
+        mergeMessages([incoming]);
+
+        if (incoming.sender === identity) {
+          // Always scroll down when YOU send a message
+          setUnreadCount(0);
+          setTimeout(() => {
+            virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" });
+          }, 50);
+        } else if (!alreadyExists) {
           playNotificationSound();
           if ("Notification" in window && Notification.permission === "granted") {
             new Notification(incoming.sender, { body: incoming.text || "Sent a media file" });
           }
+
+          // ANTI-SCROLL-HIJACK: Never yank the user down if they are scrolled up reading!
+          if (isAtBottomRef.current) {
+            setTimeout(() => {
+              virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" });
+            }, 60);
+          } else {
+            setUnreadCount((c) => c + 1);
+          }
         }
-        setTimeout(() => virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" }), 90);
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "secret_chat" }, (payload) => {
         const updated = payload.new as Message;
-        setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+        setChatState((prev) => ({
+          ...prev,
+          items: prev.items.map((m) => (m.id === updated.id ? updated : m))
+        }));
       })
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "secret_chat" }, (payload) => {
-        setMessages((prev) => prev.filter((m) => m.id !== payload.old.id));
+        setChatState((prev) => ({
+          ...prev,
+          items: prev.items.filter((m) => m.id !== payload.old.id)
+        }));
       })
       .subscribe();
 
@@ -291,7 +544,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
       supabase.removeChannel(presenceChannel);
       supabase.removeChannel(typingChannel);
     };
-  }, [identity, partnerName, loadRecentOnly, syncMissedMessages]);
+  }, [identity, partnerName, loadInitialMessages, syncMissedMessages, mergeMessages]);
 
   useEffect(() => {
     if (pickerTab !== "gif") return;
@@ -321,47 +574,8 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     return () => clearTimeout(timer);
   }, [gifSearch, pickerTab]);
 
-  const handleUnlockMemories = async () => {
-    if (isRestoringArchive || isMemoriesUnlocked) return;
-    setIsRestoringArchive(true);
-    setRestoredCount(0);
-
-    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-    let localArchiveBuffer: Message[] = [];
-    let page = 0;
-    const batchSize = 1000;
-
-    while (true) {
-      const { data, error } = await supabase
-        .from("secret_chat")
-        .select("*")
-        .lt("created_at", fortyEightHoursAgo)
-        .order("created_at", { ascending: true })
-        .range(page * batchSize, (page + 1) * batchSize - 1);
-
-      if (error || !data || data.length === 0) break;
-      localArchiveBuffer = [...localArchiveBuffer, ...data];
-      setRestoredCount(localArchiveBuffer.length);
-      if (data.length < batchSize) break;
-      page++;
-    }
-
-    setMessages((currentActive) => {
-      const combined = [...localArchiveBuffer, ...currentActive];
-      const seen = new Set<string>();
-      return combined.filter((m) => {
-        if (seen.has(m.id)) return false;
-        seen.add(m.id);
-        return true;
-      });
-    });
-
-    setIsMemoriesUnlocked(true);
-    setIsRestoringArchive(false);
-    setTimeout(() => virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end" }), 120);
-  };
-
   const scrollToBottom = () => {
+    setUnreadCount(0);
     virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" });
   };
 
@@ -406,24 +620,40 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   const sendMessage = async (textToSend: string, mediaUrl?: string, mediaType?: string) => {
     if (!textToSend.trim() && !mediaUrl) return;
-    await supabase.from("secret_chat").insert([
-      {
-        sender: identity,
-        text: textToSend || (mediaType === "gif" ? "GIF" : mediaType === "video" ? "🎬 Video" : "📷 Photo"),
-        reply_to: replyingTo ? replyingTo.text : null,
-        media_url: mediaUrl || null,
-        media_type: mediaType || null
-      }
-    ]);
+
+    const replyText = replyingTo ? replyingTo.text : null;
     setNewMessage("");
     setReplyingTo(null);
     setPickerTab(null);
     setGifSearch("");
+
     supabase.channel("typing_presence").send({
       type: "broadcast",
       event: "typing",
       payload: { sender: identity, isTyping: false }
     });
+
+    const { data, error } = await supabase
+      .from("secret_chat")
+      .insert([
+        {
+          sender: identity,
+          text: textToSend || (mediaType === "gif" ? "GIF" : mediaType === "video" ? "🎬 Video" : "📷 Photo"),
+          reply_to: replyText,
+          media_url: mediaUrl || null,
+          media_type: mediaType || null
+        }
+      ])
+      .select()
+      .single();
+
+    if (!error && data) {
+      mergeMessages([data as Message]);
+      setUnreadCount(0);
+      setTimeout(() => {
+        virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" });
+      }, 50);
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -452,7 +682,10 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   const executeMagicLink = async (targetMsg: Message) => {
     if (!linkingReplyFor) return;
-    setMessages((prev) => prev.map((m) => (m.id === linkingReplyFor ? { ...m, reply_to: targetMsg.text } : m)));
+    setChatState((prev) => ({
+      ...prev,
+      items: prev.items.map((m) => (m.id === linkingReplyFor ? { ...m, reply_to: targetMsg.text } : m))
+    }));
     await supabase.from("secret_chat").update({ reply_to: targetMsg.text }).eq("id", linkingReplyFor);
     setLinkingReplyFor(null);
   };
@@ -519,7 +752,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   return (
     <div className="fixed inset-0 z-[99999] bg-[#080d12] flex flex-col w-screen h-[100dvh] overflow-hidden select-none sm:select-auto">
-      
+
       {/* FULLSCREEN MEDIA LIGHTBOX */}
       <AnimatePresence>
         {fullscreenMedia && (
@@ -557,7 +790,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         )}
       </AnimatePresence>
 
-      {/* NATIVE MOBILE BOTTOM ACTION SHEET (Replaces cramped mobile floating bars) */}
+      {/* NATIVE MOBILE BOTTOM ACTION SHEET */}
       <AnimatePresence>
         {mobileSheetMsg && (
           <motion.div
@@ -575,7 +808,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
               onClick={(e) => e.stopPropagation()}
               className="w-full max-w-sm bg-[#121a22] border border-white/10 rounded-3xl p-4 shadow-2xl space-y-3"
             >
-              {/* Preview snippet */}
               <div className="bg-white/[0.04] rounded-2xl px-3.5 py-2.5 border border-white/[0.06]">
                 <p className="text-[10px] font-mono uppercase tracking-wider text-[#F472B6] mb-0.5">
                   {mobileSheetMsg.sender}
@@ -583,7 +815,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                 <p className="text-xs text-white/80 line-clamp-2">{mobileSheetMsg.text}</p>
               </div>
 
-              {/* Quick Reaction Row */}
               <div className="flex items-center justify-between bg-white/[0.04] rounded-2xl px-3 py-2 border border-white/[0.06]">
                 {QUICK_REACTIONS.map((emoji) => (
                   <button
@@ -596,7 +827,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                 ))}
               </div>
 
-              {/* Action Buttons */}
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => {
@@ -647,23 +877,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                 )}
               </div>
             </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* DISCREET BACKGROUND SYNC INDICATOR */}
-      <AnimatePresence>
-        {isRestoringArchive && (
-          <motion.div
-            initial={{ y: -30, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -30, opacity: 0 }}
-            className="absolute top-[68px] right-4 z-50 bg-[#121a22]/95 border border-[#F472B6]/40 px-3 py-1.5 rounded-full shadow-2xl flex items-center gap-2 backdrop-blur-xl"
-          >
-            <Loader2 className="w-3.5 h-3.5 text-[#F472B6] animate-spin" />
-            <span className="text-[11px] font-mono text-white/90">
-              Unwrapping ({restoredCount.toLocaleString()})...
-            </span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -761,7 +974,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
               type="text"
               value={chatSearchQuery}
               onChange={(e) => setChatSearchQuery(e.target.value)}
-              placeholder="Search messages..."
+              placeholder="Search loaded messages..."
               className="flex-1 bg-transparent text-white text-sm focus:outline-none placeholder:text-white/35"
               autoFocus
             />
@@ -846,296 +1059,279 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
       >
         {customBgImage && <div className="pointer-events-none absolute inset-0 bg-black/35" />}
 
-        <Virtuoso
-          ref={virtuosoRef}
-          data={messages}
-          initialTopMostItemIndex={messages.length > 0 ? messages.length - 1 : 0}
-          style={{ height: "100%", width: "100%" }}
-          atBottomStateChange={(atBottom) => setShowScrollBottom(!atBottom)}
-          components={{
-            Header: () => (
-              <div className="flex flex-col items-center justify-center my-5 space-y-3 px-4">
-                <span className="bg-[#111922]/85 backdrop-blur-md border border-white/[0.06] text-white/45 text-[10px] px-3.5 py-1 rounded-full uppercase tracking-widest shadow-sm">
-                  🔒 End-to-End Encrypted Vault
-                </span>
+        {isInitialLoading ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-white/45">
+            <Loader2 className="w-6 h-6 text-[#00c896] animate-spin" />
+            <span className="text-xs font-mono tracking-wider">Loading recent messages...</span>
+          </div>
+        ) : (
+          <Virtuoso<Message, VirtuosoContext>
+            ref={virtuosoRef}
+            data={messages}
+            firstItemIndex={firstItemIndex}
+            initialTopMostItemIndex={Math.max(0, messages.length - 1)}
+            alignToBottom={true}
+            atBottomThreshold={80}
+            followOutput={(isAtBottom) => (isAtBottom ? "smooth" : false)}
+            startReached={() => {
+              loadOlderMessages(false);
+            }}
+            computeItemKey={(_index, msg) => msg.id}
+            style={{ height: "100%", width: "100%" }}
+            atBottomStateChange={(atBottom) => {
+              isAtBottomRef.current = atBottom;
+              setShowScrollBottom(!atBottom);
+              if (atBottom) setUnreadCount(0);
+            }}
+            context={{
+              isLoadingOlder,
+              isMemoriesUnlocked,
+              hasMoreRecent,
+              hasMoreArchive,
+              messagesCount: messages.length,
+              onUnlockMemories: handleUnlockMemories
+            }}
+            components={{
+              Header: VaultHeader,
+              Footer: VaultFooter
+            }}
+            itemContent={(virtuosoIndex, msg) => {
+              const arrayIndex = virtuosoIndex - firstItemIndex;
+              const isMe = msg.sender === identity;
+              const isGif = msg.media_type === "gif";
+              const isMedia = !!msg.media_url;
+              const isHighlighted = matchedIndices[currentMatchIndex] === arrayIndex;
 
-                {!isMemoriesUnlocked && (
-                  <motion.div
-                    initial={{ scale: 0.96, opacity: 0, y: 8 }}
-                    animate={{ scale: 1, opacity: 1, y: 0 }}
-                    className="w-full max-w-md relative group mt-3 mb-2"
+              const prevMsg = arrayIndex > 0 ? messages[arrayIndex - 1] : null;
+              const nextMsg = arrayIndex < messages.length - 1 ? messages[arrayIndex + 1] : null;
+
+              const showDateDivider =
+                !prevMsg ||
+                new Date(prevMsg.created_at).toDateString() !== new Date(msg.created_at).toDateString();
+
+              const samePrev = !showDateDivider && prevMsg?.sender === msg.sender;
+              const sameNext =
+                nextMsg &&
+                nextMsg.sender === msg.sender &&
+                new Date(nextMsg.created_at).toDateString() === new Date(msg.created_at).toDateString();
+
+              let reactionDisplay: string[] = [];
+              if (msg.reaction) {
+                try {
+                  reactionDisplay = msg.reaction.startsWith("{")
+                    ? (Array.from(new Set(Object.values(JSON.parse(msg.reaction)))) as string[])
+                    : [msg.reaction];
+                } catch (_) {
+                  reactionDisplay = [msg.reaction];
+                }
+              }
+
+              const bubbleRadius = isMe
+                ? `${samePrev ? "rounded-tr-md" : "rounded-tr-2xl"} ${sameNext ? "rounded-br-md" : "rounded-br-sm"} rounded-tl-2xl rounded-bl-2xl`
+                : `${samePrev ? "rounded-tl-md" : "rounded-tl-2xl"} ${sameNext ? "rounded-bl-md" : "rounded-bl-sm"} rounded-tr-2xl rounded-br-2xl`;
+
+              return (
+                <div className={`px-3 sm:px-6 w-full flex flex-col max-w-4xl mx-auto ${samePrev ? "pt-[3px]" : "pt-2.5"} ${reactionDisplay.length > 0 ? "pb-3" : "pb-[2px]"}`}>
+
+                  {/* DATE SEPARATOR PILL */}
+                  {showDateDivider && (
+                    <div className="flex justify-center my-3">
+                      <span className="bg-[#111922]/85 backdrop-blur-md border border-white/[0.06] text-white/55 text-[11px] font-medium px-3.5 py-1 rounded-full shadow-sm">
+                        {formatDateLabel(msg.created_at)}
+                      </span>
+                    </div>
+                  )}
+
+                  <div
+                    onClick={() => {
+                      if (linkingReplyFor && linkingReplyFor !== msg.id) {
+                        executeMagicLink(msg);
+                      } else if (!msg.deleted && window.innerWidth < 768) {
+                        setMobileSheetMsg(msg);
+                      }
+                    }}
+                    onContextMenu={(e) => {
+                      if (!linkingReplyFor && !msg.deleted) {
+                        e.preventDefault();
+                        setMobileSheetMsg(msg);
+                      }
+                    }}
+                    className={`flex flex-col group relative ${isMe ? "items-end" : "items-start"} transition-transform duration-200 ${isHighlighted ? "scale-[1.015]" : ""}`}
                   >
-                    <div className="absolute -inset-0.5 bg-gradient-to-r from-[#F472B6] to-[#9333EA] rounded-3xl blur opacity-25 group-hover:opacity-50 transition duration-1000 animate-pulse" />
-                    <div className="relative bg-[#0f1620]/95 backdrop-blur-xl border border-[#F472B6]/30 rounded-3xl p-5 text-center shadow-2xl overflow-hidden">
-                      <div className="absolute -top-10 -right-10 w-32 h-32 bg-[#9333EA] opacity-15 rounded-full blur-2xl" />
-                      <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-[#F472B6] opacity-15 rounded-full blur-2xl" />
-                      <div className="relative z-10 space-y-3.5">
-                        <div className="flex justify-center">
-                          <div className="w-12 h-12 bg-gradient-to-br from-[#9333EA] to-[#F472B6] rounded-2xl flex items-center justify-center shadow-lg shadow-pink-500/25">
-                            <Gift className="w-6 h-6 text-white" />
+                    {/* DESKTOP HOVER ACTION PILL */}
+                    {!msg.deleted && !linkingReplyFor && (
+                      <div
+                        className={`hidden md:group-hover:flex absolute -top-9 ${isMe ? "right-1" : "left-1"} items-center gap-0.5 bg-[#151e28]/95 backdrop-blur-xl border border-white/10 rounded-full px-1.5 py-1 z-30 shadow-2xl`}
+                      >
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setReplyingTo(msg); }}
+                          title="Reply"
+                          className="p-1.5 rounded-full hover:bg-white/10 text-white/70 hover:text-white transition-colors"
+                        >
+                          <Reply className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setLinkingReplyFor(msg.id); }}
+                          title="Link as Reply"
+                          className="p-1.5 rounded-full hover:bg-white/10 text-white/70 hover:text-[#00A884] transition-colors"
+                        >
+                          <Link2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setActiveReactionMenu(activeReactionMenu === msg.id ? null : msg.id); }}
+                          title="React"
+                          className="p-1.5 rounded-full hover:bg-white/10 text-white/70 hover:text-[#F472B6] transition-colors"
+                        >
+                          <SmilePlus className="w-3.5 h-3.5" />
+                        </button>
+                        {isMe && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteMessage(msg); }}
+                            title="Delete"
+                            className="p-1.5 rounded-full hover:bg-red-500/15 text-red-400 hover:text-red-300 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* DESKTOP QUICK REACTION BAR */}
+                    {activeReactionMenu === msg.id && !msg.deleted && (
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        className={`hidden md:flex absolute -top-12 ${isMe ? "right-0" : "left-0"} bg-[#151e28]/95 backdrop-blur-xl border border-white/15 rounded-full px-2.5 py-1.5 gap-1.5 z-40 shadow-2xl`}
+                      >
+                        {QUICK_REACTIONS.map((emoji) => (
+                          <button
+                            key={emoji}
+                            onClick={() => addReaction(msg, emoji)}
+                            className="hover:scale-125 transition-transform text-lg px-0.5"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* MESSAGE BUBBLE */}
+                    <div
+                      className={`max-w-[84%] sm:max-w-[70%] px-3.5 pt-2 pb-1.5 relative shadow-[0_2px_12px_rgba(0,0,0,0.22)] ${bubbleRadius} ${
+                        msg.deleted
+                          ? "bg-white/[0.04] border border-white/[0.07] text-white/45 italic"
+                          : isMe
+                          ? "bg-gradient-to-br from-[#066957] to-[#024d40] text-[#EFF5F3] border border-[#10b981]/20"
+                          : "bg-[#161f29]/95 text-[#E8EEF2] border border-white/[0.06]"
+                      } ${isHighlighted ? "ring-2 ring-[#F472B6] shadow-[0_0_20px_rgba(244,114,182,0.3)]" : ""}`}
+                    >
+                      {/* Quoted Reply Block */}
+                      {msg.reply_to && msg.reply_to.trim() !== "" && !msg.deleted && (
+                        <div
+                          className={`p-2 mb-1.5 rounded-xl border-l-[3px] ${
+                            isMe ? "border-[#34d399] bg-black/20" : "border-[#F472B6] bg-black/25"
+                          }`}
+                        >
+                          <span className={`block text-[10px] font-bold tracking-wide mb-0.5 ${isMe ? "text-[#34d399]" : "text-[#F472B6]"}`}>
+                            Replying to
+                          </span>
+                          <p className="text-[12px] text-white/80 line-clamp-2 leading-snug">{msg.reply_to}</p>
+                        </div>
+                      )}
+
+                      {/* Media */}
+                      {isGif && msg.media_url && (
+                        <div
+                          className="relative cursor-pointer group/img overflow-hidden rounded-xl my-1"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFullscreenMedia({ url: msg.media_url!, type: "image" });
+                          }}
+                        >
+                          <img src={msg.media_url} alt="GIF" className="rounded-xl max-w-[240px] max-h-[220px] object-cover" />
+                          <div className="absolute inset-0 bg-black/35 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
+                            <Maximize className="w-5 h-5 text-white" />
                           </div>
                         </div>
-                        <div>
-                          <h3 className="text-transparent bg-clip-text bg-gradient-to-r from-[#F472B6] to-[#D8B4FE] font-bold text-sm uppercase tracking-widest mb-1">
-                            A Special Birthday Surprise
-                          </h3>
-                          <p className="text-[11px] text-white/55 leading-relaxed px-2">
-                            Your recent messages are loaded. A secured time capsule containing every memory, late-night conversation, and joke from 2024 to 2026 is waiting for you.
-                          </p>
-                        </div>
-                        <button
-                          onClick={handleUnlockMemories}
-                          disabled={isRestoringArchive}
-                          className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-[#9333EA] to-[#F472B6] hover:opacity-95 text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg shadow-pink-500/25 disabled:opacity-50"
-                        >
-                          {isRestoringArchive ? <Loader2 className="w-4 h-4 animate-spin text-white" /> : <Sparkles className="w-4 h-4 text-white" />}
-                          {isRestoringArchive ? "Unwrapping Memories..." : "Unwrap Memories (2024–2026)"}
-                        </button>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-
-                {isMemoriesUnlocked && (
-                  <div className="flex items-center gap-1.5 text-[#F472B6] text-[11px] font-mono bg-[#F472B6]/10 border border-[#F472B6]/30 px-3.5 py-1 rounded-full backdrop-blur-md">
-                    <Gift className="w-3.5 h-3.5" /> Full Time Capsule Unwrapped ({messages.length.toLocaleString()} memories)
-                  </div>
-                )}
-              </div>
-            ),
-            Footer: () => <div className="h-3" />
-          }}
-          itemContent={(index, msg) => {
-            const isMe = msg.sender === identity;
-            const isGif = msg.media_type === "gif";
-            const isMedia = !!msg.media_url;
-            const isHighlighted = matchedIndices[currentMatchIndex] === index;
-
-            const prevMsg = index > 0 ? messages[index - 1] : null;
-            const nextMsg = index < messages.length - 1 ? messages[index + 1] : null;
-
-            const showDateDivider =
-              !prevMsg ||
-              new Date(prevMsg.created_at).toDateString() !== new Date(msg.created_at).toDateString();
-
-            const samePrev = !showDateDivider && prevMsg?.sender === msg.sender;
-            const sameNext =
-              nextMsg &&
-              nextMsg.sender === msg.sender &&
-              new Date(nextMsg.created_at).toDateString() === new Date(msg.created_at).toDateString();
-
-            let reactionDisplay: string[] = [];
-            if (msg.reaction) {
-              try {
-                reactionDisplay = msg.reaction.startsWith("{")
-                  ? (Array.from(new Set(Object.values(JSON.parse(msg.reaction)))) as string[])
-                  : [msg.reaction];
-              } catch (_) {
-                reactionDisplay = [msg.reaction];
-              }
-            }
-
-            // Adaptive native-style bubble corners for grouped messages
-            const bubbleRadius = isMe
-              ? `${samePrev ? "rounded-tr-md" : "rounded-tr-2xl"} ${sameNext ? "rounded-br-md" : "rounded-br-sm"} rounded-tl-2xl rounded-bl-2xl`
-              : `${samePrev ? "rounded-tl-md" : "rounded-tl-2xl"} ${sameNext ? "rounded-bl-md" : "rounded-bl-sm"} rounded-tr-2xl rounded-br-2xl`;
-
-            return (
-              <div className={`px-3 sm:px-6 w-full flex flex-col max-w-4xl mx-auto ${samePrev ? "pt-[3px]" : "pt-2.5"} ${reactionDisplay.length > 0 ? "pb-3" : "pb-[2px]"}`}>
-                
-                {/* DATE SEPARATOR PILL */}
-                {showDateDivider && (
-                  <div className="flex justify-center my-3">
-                    <span className="bg-[#111922]/85 backdrop-blur-md border border-white/[0.06] text-white/55 text-[11px] font-medium px-3.5 py-1 rounded-full shadow-sm">
-                      {formatDateLabel(msg.created_at)}
-                    </span>
-                  </div>
-                )}
-
-                <div
-                  onClick={() => {
-                    if (linkingReplyFor && linkingReplyFor !== msg.id) {
-                      executeMagicLink(msg);
-                    } else if (!msg.deleted && window.innerWidth < 768) {
-                      setMobileSheetMsg(msg);
-                    }
-                  }}
-                  onContextMenu={(e) => {
-                    if (!linkingReplyFor && !msg.deleted) {
-                      e.preventDefault();
-                      setMobileSheetMsg(msg);
-                    }
-                  }}
-                  className={`flex flex-col group relative ${isMe ? "items-end" : "items-start"} transition-transform duration-200 ${isHighlighted ? "scale-[1.015]" : ""}`}
-                >
-                  {/* DESKTOP HOVER ACTION PILL */}
-                  {!msg.deleted && !linkingReplyFor && (
-                    <div
-                      className={`hidden md:group-hover:flex absolute -top-9 ${isMe ? "right-1" : "left-1"} items-center gap-0.5 bg-[#151e28]/95 backdrop-blur-xl border border-white/10 rounded-full px-1.5 py-1 z-30 shadow-2xl`}
-                    >
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setReplyingTo(msg); }}
-                        title="Reply"
-                        className="p-1.5 rounded-full hover:bg-white/10 text-white/70 hover:text-white transition-colors"
-                      >
-                        <Reply className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setLinkingReplyFor(msg.id); }}
-                        title="Link as Reply"
-                        className="p-1.5 rounded-full hover:bg-white/10 text-white/70 hover:text-[#00A884] transition-colors"
-                      >
-                        <Link2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setActiveReactionMenu(activeReactionMenu === msg.id ? null : msg.id); }}
-                        title="React"
-                        className="p-1.5 rounded-full hover:bg-white/10 text-white/70 hover:text-[#F472B6] transition-colors"
-                      >
-                        <SmilePlus className="w-3.5 h-3.5" />
-                      </button>
-                      {isMe && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); deleteMessage(msg); }}
-                          title="Delete"
-                          className="p-1.5 rounded-full hover:bg-red-500/15 text-red-400 hover:text-red-300 transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
                       )}
-                    </div>
-                  )}
 
-                  {/* DESKTOP QUICK REACTION BAR */}
-                  {activeReactionMenu === msg.id && !msg.deleted && (
-                    <div
-                      onClick={(e) => e.stopPropagation()}
-                      className={`hidden md:flex absolute -top-12 ${isMe ? "right-0" : "left-0"} bg-[#151e28]/95 backdrop-blur-xl border border-white/15 rounded-full px-2.5 py-1.5 gap-1.5 z-40 shadow-2xl`}
-                    >
-                      {QUICK_REACTIONS.map((emoji) => (
-                        <button
-                          key={emoji}
-                          onClick={() => addReaction(msg, emoji)}
-                          className="hover:scale-125 transition-transform text-lg px-0.5"
+                      {msg.media_url && !isGif && msg.media_type === "image" && (
+                        <div
+                          className="relative cursor-pointer group/img overflow-hidden rounded-xl my-1"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFullscreenMedia({ url: msg.media_url!, type: "image" });
+                          }}
                         >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* MESSAGE BUBBLE */}
-                  <div
-                    className={`max-w-[84%] sm:max-w-[70%] px-3.5 pt-2 pb-1.5 relative shadow-[0_2px_12px_rgba(0,0,0,0.22)] ${bubbleRadius} ${
-                      msg.deleted
-                        ? "bg-white/[0.04] border border-white/[0.07] text-white/45 italic"
-                        : isMe
-                        ? "bg-gradient-to-br from-[#066957] to-[#024d40] text-[#EFF5F3] border border-[#10b981]/20"
-                        : "bg-[#161f29]/95 text-[#E8EEF2] border border-white/[0.06]"
-                    } ${isHighlighted ? "ring-2 ring-[#F472B6] shadow-[0_0_20px_rgba(244,114,182,0.3)]" : ""}`}
-                  >
-                    {/* Quoted Reply Block */}
-                    {msg.reply_to && msg.reply_to.trim() !== "" && !msg.deleted && (
-                      <div
-                        className={`p-2 mb-1.5 rounded-xl border-l-[3px] ${
-                          isMe ? "border-[#34d399] bg-black/20" : "border-[#F472B6] bg-black/25"
-                        }`}
-                      >
-                        <span className={`block text-[10px] font-bold tracking-wide mb-0.5 ${isMe ? "text-[#34d399]" : "text-[#F472B6]"}`}>
-                          Replying to
-                        </span>
-                        <p className="text-[12px] text-white/80 line-clamp-2 leading-snug">{msg.reply_to}</p>
-                      </div>
-                    )}
-
-                    {/* Media */}
-                    {isGif && msg.media_url && (
-                      <div
-                        className="relative cursor-pointer group/img overflow-hidden rounded-xl my-1"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setFullscreenMedia({ url: msg.media_url!, type: "image" });
-                        }}
-                      >
-                        <img src={msg.media_url} alt="GIF" className="rounded-xl max-w-[240px] max-h-[220px] object-cover" />
-                        <div className="absolute inset-0 bg-black/35 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
-                          <Maximize className="w-5 h-5 text-white" />
+                          <img src={msg.media_url} alt="Media" className="rounded-xl max-w-full max-h-[290px] object-cover" />
+                          <div className="absolute inset-0 bg-black/35 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
+                            <Maximize className="w-5 h-5 text-white" />
+                          </div>
                         </div>
-                      </div>
-                    )}
-
-                    {msg.media_url && !isGif && msg.media_type === "image" && (
-                      <div
-                        className="relative cursor-pointer group/img overflow-hidden rounded-xl my-1"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setFullscreenMedia({ url: msg.media_url!, type: "image" });
-                        }}
-                      >
-                        <img src={msg.media_url} alt="Media" className="rounded-xl max-w-full max-h-[290px] object-cover" />
-                        <div className="absolute inset-0 bg-black/35 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
-                          <Maximize className="w-5 h-5 text-white" />
-                        </div>
-                      </div>
-                    )}
-
-                    {msg.media_url && !isGif && msg.media_type === "video" && (
-                      <div className="relative rounded-xl overflow-hidden my-1" onClick={(e) => e.stopPropagation()}>
-                        <video src={msg.media_url} controls className="rounded-xl max-w-full max-h-[290px] object-cover" />
-                        <button
-                          onClick={() => setFullscreenMedia({ url: msg.media_url!, type: "video" })}
-                          className="absolute top-2 right-2 bg-black/60 backdrop-blur-md p-1.5 rounded-lg hover:bg-black/80 text-white"
-                        >
-                          <Maximize className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Text Body */}
-                    {msg.text && !isGif && !isMedia && (
-                      <p className="text-[14.5px] leading-[1.45] break-words whitespace-pre-wrap">
-                        {msg.deleted ? msg.text : renderFormattedText(msg.text)}
-                      </p>
-                    )}
-
-                    {/* Floating Reaction Badge */}
-                    {reactionDisplay.length > 0 && !msg.deleted && (
-                      <motion.div
-                        initial={{ scale: 0.5, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        className={`absolute -bottom-3 ${isMe ? "right-2.5" : "left-2.5"} bg-[#141d27] border border-white/15 rounded-full px-2 py-0.5 text-xs shadow-xl z-10 flex items-center gap-0.5`}
-                      >
-                        {reactionDisplay.map((emoji, idx) => (
-                          <span key={idx}>{emoji}</span>
-                        ))}
-                      </motion.div>
-                    )}
-
-                    {/* Timestamp & Read Ticks */}
-                    <div className="flex items-center justify-end gap-1 mt-1 opacity-65">
-                      <span className="text-[10px] font-mono tracking-tight">{formatTime(msg.created_at)}</span>
-                      {isMe && !msg.deleted && (
-                        <CheckCheck className={`w-3.5 h-3.5 ${partnerOnline ? "text-[#53bdeb]" : "text-white/45"}`} />
                       )}
+
+                      {msg.media_url && !isGif && msg.media_type === "video" && (
+                        <div className="relative rounded-xl overflow-hidden my-1" onClick={(e) => e.stopPropagation()}>
+                          <video src={msg.media_url} controls className="rounded-xl max-w-full max-h-[290px] object-cover" />
+                          <button
+                            onClick={() => setFullscreenMedia({ url: msg.media_url!, type: "video" })}
+                            className="absolute top-2 right-2 bg-black/60 backdrop-blur-md p-1.5 rounded-lg hover:bg-black/80 text-white"
+                          >
+                            <Maximize className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Text Body */}
+                      {msg.text && !isGif && !isMedia && (
+                        <p className="text-[14.5px] leading-[1.45] break-words whitespace-pre-wrap">
+                          {msg.deleted ? msg.text : renderFormattedText(msg.text)}
+                        </p>
+                      )}
+
+                      {/* Floating Reaction Badge */}
+                      {reactionDisplay.length > 0 && !msg.deleted && (
+                        <motion.div
+                          initial={{ scale: 0.5, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          className={`absolute -bottom-3 ${isMe ? "right-2.5" : "left-2.5"} bg-[#141d27] border border-white/15 rounded-full px-2 py-0.5 text-xs shadow-xl z-10 flex items-center gap-0.5`}
+                        >
+                          {reactionDisplay.map((emoji, idx) => (
+                            <span key={idx}>{emoji}</span>
+                          ))}
+                        </motion.div>
+                      )}
+
+                      {/* Timestamp & Read Ticks */}
+                      <div className="flex items-center justify-end gap-1 mt-1 opacity-65">
+                        <span className="text-[10px] font-mono tracking-tight">{formatTime(msg.created_at)}</span>
+                        {isMe && !msg.deleted && (
+                          <CheckCheck className={`w-3.5 h-3.5 ${partnerOnline ? "text-[#53bdeb]" : "text-white/45"}`} />
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            );
-          }}
-        />
+              );
+            }}
+          />
+        )}
 
-        {/* FLOATING SCROLL-TO-BOTTOM BUTTON */}
+        {/* FLOATING SCROLL-TO-BOTTOM BUTTON + UNREAD COUNTER BADGE */}
         <AnimatePresence>
-          {showScrollBottom && (
+          {(showScrollBottom || unreadCount > 0) && (
             <motion.button
               initial={{ scale: 0.6, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.6, opacity: 0 }}
               onClick={scrollToBottom}
-              className="absolute bottom-5 right-4 sm:right-6 z-40 bg-[#141d27]/90 hover:bg-[#1c2836] text-white p-3 rounded-full shadow-[0_8px_24px_rgba(0,0,0,0.45)] border border-white/15 backdrop-blur-xl flex items-center justify-center transition-all hover:scale-105"
+              className="absolute bottom-5 right-4 sm:right-6 z-40 bg-[#141d27]/95 hover:bg-[#1c2836] text-white p-3 rounded-full shadow-[0_8px_24px_rgba(0,0,0,0.45)] border border-white/15 backdrop-blur-xl flex items-center justify-center transition-all hover:scale-105"
               title="Jump to latest"
             >
+              {unreadCount > 0 && (
+                <span className="absolute -top-2 -right-1 min-w-[20px] h-5 px-1.5 rounded-full bg-gradient-to-r from-[#9333EA] to-[#F472B6] text-white text-[10px] font-bold flex items-center justify-center shadow-lg">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
+              )}
               <ArrowDown className="w-5 h-5 text-[#00c896]" />
             </motion.button>
           )}
