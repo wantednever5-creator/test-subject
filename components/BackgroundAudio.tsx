@@ -14,6 +14,7 @@ import { createClient, RealtimeChannel } from "@supabase/supabase-js";
 
 declare global {
   interface Window {
+    __vaultRoomCover?: string | null;
     YT?: {
       Player: new (
         element: HTMLElement | string,
@@ -114,6 +115,17 @@ const formatDuration = (secs: number | null | undefined) => {
   return `${m}:${s < 10 ? "0" : ""}${s}`;
 };
 
+// Detect phones/tablets vs laptops/desktops so laptops never drop out of the room on tab switch
+const isMobileDevice = (): boolean => {
+  if (typeof window === "undefined") return false;
+  const coarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches;
+  const mobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  return Boolean(coarsePointer || mobileUA);
+};
+
+const shouldBlockBecauseHidden = (): boolean =>
+  isMobileDevice() && typeof document !== "undefined" && document.visibilityState === "hidden";
+
 const extractYouTubeId = (input: string): string | null => {
   const trimmed = input.trim();
   if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
@@ -176,7 +188,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
   const [homeShelves, setHomeShelves] = useState<HomeShelf[]>([]);
   const [isLoadingHome, setIsLoadingHome] = useState(false);
 
-  // Room Queue (plays before auto-radio) + Auto-Recommended Radio
+  // Room Queue + Auto-Recommended Radio
   const [manualQueue, setManualQueue] = useState<MusicTrack[]>([]);
   const [upNextTracks, setUpNextTracks] = useState<MusicTrack[]>([]);
   const [isLoadingUpNext, setIsLoadingUpNext] = useState(false);
@@ -248,6 +260,27 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     volumeRef.current = volume;
     isMutedRef.current = isMuted;
   }, [volume, isMuted]);
+
+  // Exact cover picture ONLY while connected to the Music Room
+  const activeRoomCover = inRoom && currentTrack?.thumbnail ? currentTrack.thumbnail : null;
+
+  // Broadcast active room cover art so Chat Vault can mirror it live while in the room
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.__vaultRoomCover = activeRoomCover;
+    window.dispatchEvent(
+      new CustomEvent("vault-room-cover", { detail: { coverUrl: activeRoomCover } })
+    );
+  }, [activeRoomCover]);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined") {
+        window.__vaultRoomCover = null;
+        window.dispatchEvent(new CustomEvent("vault-room-cover", { detail: { coverUrl: null } }));
+      }
+    };
+  }, []);
 
   const savedVideoIdSet = new Set(
     vaultTracks.filter((t) => t.source === "youtube" && t.videoId).map((t) => t.videoId!)
@@ -399,10 +432,12 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     [syncMyPresence, flashRoomActivity]
   );
 
-  // 1. STRICT ACTIVE-DEVICE GUARD: Closing tab, switching apps, or locking screen stops audio & exits room
+  // 1. DEVICE-AWARE LIFECYCLE:
+  //    - Phones/Android: stops & leaves when locked or switched away
+  //    - Laptops/Desktops: stays in room across tab switches; ONLY leaves when site/tab is closed
   useEffect(() => {
     const handleVisibility = () => {
-      if (document.visibilityState === "hidden") {
+      if (isMobileDevice() && document.visibilityState === "hidden") {
         leaveRoomAndStop(true);
       }
     };
@@ -425,7 +460,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     };
   }, [leaveRoomAndStop]);
 
-  // 2. Always-Connected Discord-Style Room Channel (Shows live listener status even before joining)
+  // 2. Always-Connected Discord-Style Room Channel
   useEffect(() => {
     const channel = supabase.channel("vault_discord_music_room", {
       config: {
@@ -451,7 +486,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         const data = payload as RoomSyncPayload;
         if (!data || data.senderId === sessionIdRef.current) return;
         if (data.targetId && data.targetId !== sessionIdRef.current) return;
-        // Ignore playback syncs unless we have actively joined the Room
         if (!inRoomRef.current) return;
         applyRemoteSyncRef.current(data);
       })
@@ -459,9 +493,8 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         const requesterId = payload?.requesterId as string | undefined;
         const reqSentAt = payload?.reqSentAt as number | undefined;
         if (!requesterId || requesterId === sessionIdRef.current) return;
-        if (!inRoomRef.current || document.visibilityState !== "visible") return;
+        if (!inRoomRef.current || shouldBlockBecauseHidden()) return;
 
-        // Reply immediately with exact live position & full upcoming queue
         channel.send({
           type: "broadcast",
           event: "room_sync",
@@ -543,7 +576,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             if (event.data === window.YT.PlayerState.ENDED) {
               handleTrackEndRef.current();
             } else if (event.data === window.YT.PlayerState.PLAYING) {
-              if (document.visibilityState === "hidden" || !inRoomRef.current) {
+              if (shouldBlockBecauseHidden() || !inRoomRef.current) {
                 event.target.pauseVideo();
                 return;
               }
@@ -774,7 +807,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     return () => clearInterval(interval);
   }, [isPlaying, currentTrack]);
 
-  // Core Playback Engine (Playing any track automatically puts you in the Music Room)
+  // Core Playback Engine
   const playTrackFromContext = useCallback(
     (
       track: MusicTrack,
@@ -796,7 +829,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       if (endFallbackTimerRef.current) clearTimeout(endFallbackTimerRef.current);
       if (fromRemote) markRemoteAction(1100);
 
-      // Playing a track automatically connects you to the Discord-style Music Room
       if (!inRoomRef.current) {
         setInRoom(true);
         inRoomRef.current = true;
@@ -869,7 +901,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     [fetchUpNextForTrack, markRemoteAction, broadcastRoomSync, identity]
   );
 
-  // JOIN THE DISCORD-STYLE MUSIC ROOM (Runs audio start synchronously inside tap gesture!)
+  // JOIN THE DISCORD-STYLE MUSIC ROOM
   const joinMusicRoom = useCallback(
     (e?: React.MouseEvent) => {
       e?.stopPropagation();
@@ -877,7 +909,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       inRoomRef.current = true;
       setPendingAudioUnlock(null);
 
-      // Look for an active partner already listening in the room
       const remoteInRoom = roomMembersRef.current.filter(
         (m) => m.inRoom && m.sessionId !== sessionIdRef.current
       );
@@ -892,7 +923,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
           : 0;
         const startAt = Math.max(0, (host.baseTime || 0) + elapsed);
 
-        // Start playback synchronously on user tap so Android/iOS unlocks unmuted audio
         playTrackFromContext(host.track, undefined, false, {
           startSeconds: startAt,
           fromRemote: true,
@@ -911,7 +941,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         baseTime: host?.track ? host.baseTime : getLiveTime()
       });
 
-      // Request exact RTT-compensated position + full shared upcoming queue
       if (roomChannelRef.current) {
         roomChannelRef.current.send({
           type: "broadcast",
@@ -929,10 +958,9 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
   // Apply incoming room sync from partner
   const applyRemoteSync = useCallback(
     (payload: RoomSyncPayload) => {
-      if (!inRoomRef.current || document.visibilityState !== "visible") return;
+      if (!inRoomRef.current || shouldBlockBecauseHidden()) return;
       if (endFallbackTimerRef.current) clearTimeout(endFallbackTimerRef.current);
 
-      // Always sync the shared upcoming queue
       if (Array.isArray(payload.manualQueue)) {
         setManualQueue(payload.manualQueue);
         manualQueueRef.current = payload.manualQueue;
@@ -941,7 +969,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       if (payload.note) flashRoomActivity(payload.note);
       if (!payload.track) return;
 
-      // Use clock-skew-free RTT when answering a join request; fall back to clamped delta otherwise
       let latencySec = 0;
       if (payload.isPlaying) {
         if (typeof payload.echoReqSentAt === "number") {
@@ -1012,10 +1039,9 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         baseTime: targetTime
       });
 
-      // Fallback detector if mobile browser blocked remote track change autoplay
       if (payload.isPlaying && payload.track.source === "youtube") {
         setTimeout(() => {
-          if (!inRoomRef.current || document.visibilityState !== "visible") return;
+          if (!inRoomRef.current || shouldBlockBecauseHidden()) return;
           if (currentTrackRef.current?.id !== payload.track?.id) return;
           const ytState = ytPlayerRef.current?.getPlayerState?.();
           if (
@@ -1036,6 +1062,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     applyRemoteSyncRef.current = applyRemoteSync;
   }, [applyRemoteSync]);
 
+  // Fixed TypeScript narrowing for payload.track
   const handleManualUnlock = (e?: React.MouseEvent) => {
     e?.stopPropagation();
     const payload = pendingAudioUnlock;
@@ -1204,7 +1231,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
   }, [activeQueue, upNextTracks, vaultTracks]);
 
   const playNext = useCallback(() => {
-    // 1. Always play manually queued upcoming songs FIRST
     if (manualQueueRef.current.length > 0) {
       const [nextQueued, ...rest] = manualQueueRef.current;
       setManualQueue(rest);
@@ -1215,7 +1241,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       return;
     }
 
-    // 2. Otherwise fall back to active playlist / auto-radio
     const queue = getEffectiveQueue();
     if (queue.length === 0) return;
 
@@ -1260,7 +1285,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     playTrackFromContext(queue[prevIndex], queue, false);
   }, [getEffectiveQueue, getLiveTime, playTrackFromContext, broadcastRoomSync, identity]);
 
-  // Prevent double-skipping when two synced devices finish a track within milliseconds of each other
   const handleTrackEnd = useCallback(() => {
     const advanceNow = () => {
       if (repeatMode === "one" && currentTrackRef.current) {
@@ -1284,7 +1308,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       .map((m) => m.sessionId)
       .sort();
 
-    // Designate lowest sessionId as auto-advance leader; partner waits 1.5s fallback so queue never double-pops
     const isLeader = inRoomIds.length <= 1 || inRoomIds[0] === sessionIdRef.current;
 
     if (isLeader) {
@@ -1481,7 +1504,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
 
   // Reusable Discord-Style Voice/Music Room Status Strip
   const renderDiscordRoomBar = () => (
-    <div className="relative z-10 px-3 sm:px-6 py-2.5 bg-[#0d141d] border-b border-white/[0.06] flex items-center justify-between gap-3 flex-shrink-0">
+    <div className="relative z-10 px-3 sm:px-6 py-2.5 bg-[#0d141d]/75 backdrop-blur-xl border-b border-white/[0.08] flex items-center justify-between gap-3 flex-shrink-0">
       <div className="flex items-center gap-2.5 min-w-0 flex-1">
         <div
           className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 border ${
@@ -1512,7 +1535,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
               </div>
             )}
           </div>
-          <p className="text-[11px] text-white/45 truncate mt-0.5">
+          <p className="text-[11px] text-white/55 truncate mt-0.5">
             {inRoom
               ? roomActivity ||
                 (activeListeners.length >= 2
@@ -1528,7 +1551,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       {inRoom ? (
         <button
           onClick={() => leaveRoomAndStop(false)}
-          className="flex items-center gap-1.5 bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-300 text-xs font-semibold px-3 py-1.5 rounded-full transition-colors flex-shrink-0"
+          className="flex items-center gap-1.5 bg-red-500/20 hover:bg-red-500/30 border border-red-500/35 text-red-200 text-xs font-semibold px-3 py-1.5 rounded-full transition-colors flex-shrink-0"
         >
           <LogOut className="w-3.5 h-3.5" />
           <span>Leave</span>
@@ -1545,7 +1568,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     </div>
   );
 
-  // Reusable Full Player Deck (Desktop Left Panel + Mobile Expanded Modal)
+  // Reusable Full Player Deck
   const renderFullPlayerDeck = (isMobileModal = false) => (
     <div className="flex flex-col items-center justify-center w-full max-w-sm mx-auto">
       {/* Album Art */}
@@ -1558,7 +1581,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         <div
           className={`relative ${
             isMobileModal ? "w-52 h-52" : "w-44 h-44"
-          } rounded-3xl bg-[#111822] border border-white/15 flex items-center justify-center shadow-2xl overflow-hidden`}
+          } rounded-3xl bg-[#111822]/90 border border-white/20 flex items-center justify-center shadow-2xl overflow-hidden`}
         >
           {currentTrack?.thumbnail ? (
             <img
@@ -1575,10 +1598,10 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       {/* Title, Artist & Save Heart */}
       <div className="w-full flex items-center justify-between gap-3 mb-4 px-1">
         <div className="min-w-0 text-left flex-1">
-          <h3 className="text-lg font-semibold text-white truncate">
+          <h3 className="text-lg font-semibold text-white truncate drop-shadow">
             {currentTrack ? currentTrack.displayName : remoteHostWithTrack?.track ? remoteHostWithTrack.track.displayName : "No track playing"}
           </h3>
-          <p className="text-xs text-white/50 truncate mt-0.5">
+          <p className="text-xs text-white/60 truncate mt-0.5">
             {currentTrack
               ? currentTrack.artist || "YouTube Music"
               : remoteHostWithTrack?.track
@@ -1593,8 +1616,8 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             title={isCurrentSaved ? "Remove from Vault" : "Save to Shared Vault"}
             className={`p-2.5 rounded-full border transition-all flex-shrink-0 ${
               isCurrentSaved
-                ? "bg-[#F472B6]/15 border-[#F472B6]/40 text-[#F472B6]"
-                : "bg-white/[0.05] border-white/10 text-white/55 hover:text-white"
+                ? "bg-[#F472B6]/20 border-[#F472B6]/45 text-[#F472B6]"
+                : "bg-black/30 border-white/15 text-white/65 hover:text-white"
             }`}
           >
             <Heart className={`w-4 h-4 ${isCurrentSaved ? "fill-[#F472B6]" : ""}`} />
@@ -1619,10 +1642,10 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className={`w-full mb-3 text-[11px] px-3 py-2 rounded-xl flex items-start gap-2 border ${
+            className={`w-full mb-3 text-[11px] px-3 py-2 rounded-xl flex items-start gap-2 border backdrop-blur-md ${
               statusNotice.type === "error"
-                ? "bg-red-500/10 border-red-500/30 text-red-300"
-                : "bg-[#F472B6]/10 border-[#F472B6]/30 text-pink-200"
+                ? "bg-red-500/15 border-red-500/35 text-red-200"
+                : "bg-black/40 border-[#F472B6]/35 text-pink-200"
             }`}
           >
             <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
@@ -1635,7 +1658,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       {/* Interactive Timestamp Scrubber */}
       <div className="w-full space-y-1.5 mb-5">
         <div className="relative w-full h-5 flex items-center">
-          <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+          <div className="w-full h-1.5 bg-white/15 rounded-full overflow-hidden">
             <div
               className="h-full bg-gradient-to-r from-[#9333EA] to-[#F472B6] rounded-full"
               style={{ width: `${progressPercent}%` }}
@@ -1661,7 +1684,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             style={{ left: `${progressPercent}%` }}
           />
         </div>
-        <div className="flex justify-between text-[11px] font-mono text-white/45">
+        <div className="flex justify-between text-[11px] font-mono text-white/60">
           <span>{formatDuration(currentTime)}</span>
           <span>{formatDuration(duration)}</span>
         </div>
@@ -1672,12 +1695,12 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         <button
           onClick={() => setIsShuffle(!isShuffle)}
           title="Shuffle"
-          className={`p-2 rounded-full transition-colors ${isShuffle ? "text-[#F472B6] bg-[#F472B6]/10" : "text-white/45 hover:text-white"}`}
+          className={`p-2 rounded-full transition-colors ${isShuffle ? "text-[#F472B6] bg-[#F472B6]/15" : "text-white/55 hover:text-white"}`}
         >
           <Shuffle className="w-4 h-4" />
         </button>
 
-        <button onClick={playPrev} title="Previous" className="p-2.5 text-white/80 hover:text-white active:scale-90 transition-transform">
+        <button onClick={playPrev} title="Previous" className="p-2.5 text-white/85 hover:text-white active:scale-90 transition-transform">
           <SkipBack className="w-6 h-6" />
         </button>
 
@@ -1692,7 +1715,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         <button
           onClick={playNext}
           title={manualQueue.length > 0 ? `Play Next: ${manualQueue[0].displayName}` : "Next"}
-          className="relative p-2.5 text-white/80 hover:text-white active:scale-90 transition-transform"
+          className="relative p-2.5 text-white/85 hover:text-white active:scale-90 transition-transform"
         >
           <SkipForward className="w-6 h-6" />
           {manualQueue.length > 0 && (
@@ -1705,7 +1728,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         <button
           onClick={() => setRepeatMode((p) => (p === "all" ? "one" : p === "one" ? "off" : "all"))}
           title={`Repeat: ${repeatMode}`}
-          className={`p-2 rounded-full transition-colors ${repeatMode !== "off" ? "text-[#F472B6] bg-[#F472B6]/10" : "text-white/45 hover:text-white"}`}
+          className={`p-2 rounded-full transition-colors ${repeatMode !== "off" ? "text-[#F472B6] bg-[#F472B6]/15" : "text-white/55 hover:text-white"}`}
         >
           {repeatMode === "one" ? <Repeat1 className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
         </button>
@@ -1715,7 +1738,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       <div className="w-full max-w-[230px] flex items-center gap-3 mt-5">
         <button
           onClick={() => setIsMuted(!isMuted)}
-          className="text-white/60 hover:text-white transition-colors"
+          className="text-white/70 hover:text-white transition-colors"
           title={isMuted ? "Unmute" : "Mute"}
         >
           {isMuted || volume === 0 ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4" />}
@@ -1730,7 +1753,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             setVolume(parseFloat(e.target.value));
             if (isMuted) setIsMuted(false);
           }}
-          className="w-full h-1 accent-[#F472B6] bg-white/10 rounded-full cursor-pointer"
+          className="w-full h-1 accent-[#F472B6] bg-white/15 rounded-full cursor-pointer"
         />
       </div>
     </div>
@@ -1749,10 +1772,10 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
           if (isCurrent) togglePlayPauseCurrent();
           else playTrackFromContext(track, contextList, triggerRadio);
         }}
-        className={`group flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-2xl border transition-all cursor-pointer ${
+        className={`group flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-2xl border backdrop-blur-md transition-all cursor-pointer ${
           isCurrent
-            ? "bg-gradient-to-r from-[#9333EA]/20 to-[#F472B6]/15 border-[#F472B6]/40 shadow-lg"
-            : "bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]"
+            ? "bg-gradient-to-r from-[#9333EA]/30 to-[#F472B6]/20 border-[#F472B6]/45 shadow-lg"
+            : "bg-black/30 border-white/[0.08] hover:bg-black/45"
         }`}
       >
         <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -1771,7 +1794,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             <p className={`text-sm truncate ${isCurrent ? "text-white font-semibold" : "text-white/90"}`}>
               {track.displayName}
             </p>
-            <p className="text-[11px] text-white/45 truncate mt-0.5">
+            <p className="text-[11px] text-white/55 truncate mt-0.5">
               {track.artist || "YouTube Music"}
               {track.duration ? ` • ${formatDuration(track.duration)}` : ""}
             </p>
@@ -1782,7 +1805,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
           <button
             onClick={(e) => addToUpcomingQueue(track, e)}
             title="Add to Upcoming Queue"
-            className="p-2 rounded-xl text-white/50 hover:text-[#00c896] hover:bg-[#00c896]/10 transition-colors"
+            className="p-2 rounded-xl text-white/55 hover:text-[#00c896] hover:bg-[#00c896]/15 transition-colors"
           >
             <ListPlus className="w-4 h-4" />
           </button>
@@ -1793,8 +1816,8 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             title={isSaved ? "Saved in Vault" : "Save to Shared Vault"}
             className={`p-2 rounded-xl transition-colors ${
               isSaved
-                ? "text-[#F472B6] bg-[#F472B6]/10"
-                : "text-white/40 hover:text-white hover:bg-white/[0.08]"
+                ? "text-[#F472B6] bg-[#F472B6]/15"
+                : "text-white/50 hover:text-white hover:bg-white/[0.1]"
             }`}
           >
             {isSaving ? (
@@ -1837,10 +1860,9 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         <div ref={ytContainerRef} />
       </div>
 
-      {/* TOP-CENTER DISCORD-STYLE ROOM PILL (Visible across Home & Chat) */}
+      {/* TOP-CENTER DISCORD-STYLE ROOM PILL */}
       <div className="fixed top-2.5 left-1/2 -translate-x-1/2 z-[999990] flex flex-col items-center gap-1.5">
         {!inRoom && remoteHostWithTrack ? (
-          /* Partner is live in the Room -> One-Tap Join straight from Chat! */
           <motion.div
             initial={{ opacity: 0, y: -12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1895,7 +1917,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
           </motion.button>
         )}
 
-        {/* Fallback unlock button over Chat if mobile browser paused a remote track switch */}
         <AnimatePresence>
           {!isLibraryOpen && pendingAudioUnlock && (
             <motion.button
@@ -1921,13 +1942,39 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             transition={{ duration: 0.22, ease: "easeOut" }}
             className="fixed inset-0 z-[9999999] bg-[#070a0f] text-white flex flex-col w-screen h-[100dvh] overflow-hidden"
           >
-            <div className="pointer-events-none absolute -top-32 left-1/2 -translate-x-1/2 w-[500px] h-[350px] bg-gradient-to-b from-[#9333EA]/20 via-[#F472B6]/10 to-transparent blur-3xl" />
+            {/* DYNAMIC SONG COVER BACKGROUND (Active ONLY while inside the Music Room) */}
+            <AnimatePresence mode="wait">
+              {activeRoomCover ? (
+                <motion.div
+                  key={activeRoomCover}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.6 }}
+                  className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
+                >
+                  <div
+                    className="absolute inset-0 bg-cover bg-center scale-105 transition-transform duration-1000"
+                    style={{ backgroundImage: `url(${activeRoomCover})` }}
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-b from-[#070a0f]/75 via-[#070a0f]/65 to-[#070a0f]/90 backdrop-blur-[3px]" />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="default-ambient"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="pointer-events-none absolute -top-32 left-1/2 -translate-x-1/2 w-[500px] h-[350px] bg-gradient-to-b from-[#9333EA]/20 via-[#F472B6]/10 to-transparent blur-3xl z-0"
+                />
+              )}
+            </AnimatePresence>
 
             {/* Top Header */}
-            <div className="relative z-10 flex items-center justify-between px-3 sm:px-6 py-3 border-b border-white/[0.07] bg-[#0b1017]/85 backdrop-blur-xl flex-shrink-0 gap-2">
+            <div className="relative z-10 flex items-center justify-between px-3 sm:px-6 py-3 border-b border-white/[0.08] bg-[#0b1017]/70 backdrop-blur-xl flex-shrink-0 gap-2">
               <button
                 onClick={() => setIsLibraryOpen(false)}
-                className="flex items-center gap-1.5 text-white/75 hover:text-white bg-white/[0.05] hover:bg-white/[0.1] px-3 py-2 rounded-full text-xs font-medium transition-colors flex-shrink-0"
+                className="flex items-center gap-1.5 text-white/80 hover:text-white bg-white/[0.07] hover:bg-white/[0.14] px-3 py-2 rounded-full text-xs font-medium transition-colors flex-shrink-0"
               >
                 <ArrowLeft className="w-4 h-4" />
                 <span>Back</span>
@@ -1935,10 +1982,10 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
 
               <div className="text-center">
                 <h2 className="text-sm font-semibold tracking-wider uppercase text-white">Vault Music</h2>
-                <p className="text-[10px] text-white/40 font-mono">YouTube Music • Live Room</p>
+                <p className="text-[10px] text-white/50 font-mono">YouTube Music • Live Room</p>
               </div>
 
-              <label className="flex items-center gap-1.5 bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-white text-xs font-medium px-3 py-2 rounded-full cursor-pointer transition-all flex-shrink-0">
+              <label className="flex items-center gap-1.5 bg-white/[0.07] hover:bg-white/[0.14] border border-white/15 text-white text-xs font-medium px-3 py-2 rounded-full cursor-pointer transition-all flex-shrink-0">
                 {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5 text-[#F472B6]" />}
                 <span>{isUploading ? "..." : "MP3"}</span>
                 <input type="file" accept="audio/*" onChange={handleUpload} className="hidden" />
@@ -1955,8 +2002,8 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                   initial={{ height: 0, opacity: 0 }}
                   animate={{ height: "auto", opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
-                  className={`lg:hidden relative z-10 px-4 py-1.5 border-b border-white/[0.06] text-center text-[11px] font-mono flex-shrink-0 ${
-                    statusNotice.type === "error" ? "bg-red-950/60 text-red-300" : "bg-[#121a24] text-pink-200"
+                  className={`lg:hidden relative z-10 px-4 py-1.5 border-b border-white/[0.08] text-center text-[11px] font-mono flex-shrink-0 backdrop-blur-md ${
+                    statusNotice.type === "error" ? "bg-red-950/70 text-red-200" : "bg-black/50 text-pink-200"
                   }`}
                 >
                   {statusNotice.text}
@@ -1968,7 +2015,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             <div className="relative z-10 flex-1 min-h-0 flex flex-col lg:flex-row max-w-6xl w-full mx-auto overflow-hidden">
               
               {/* DESKTOP LEFT PANEL */}
-              <div className="hidden lg:flex w-[40%] p-8 flex-col items-center justify-center border-r border-white/[0.06] flex-shrink-0 bg-gradient-to-b from-white/[0.02] to-transparent">
+              <div className="hidden lg:flex w-[40%] p-8 flex-col items-center justify-center border-r border-white/[0.08] flex-shrink-0">
                 {renderFullPlayerDeck(false)}
               </div>
 
@@ -1976,7 +2023,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                 
                 {/* Navigation Tabs */}
-                <div className="grid grid-cols-4 gap-1 px-3 sm:px-6 pt-3 pb-2 border-b border-white/[0.06] flex-shrink-0">
+                <div className="grid grid-cols-4 gap-1 px-3 sm:px-6 pt-3 pb-2 border-b border-white/[0.08] flex-shrink-0">
                   {[
                     { id: "discover" as ActiveTab, label: "Discover", icon: Compass },
                     { id: "search" as ActiveTab, label: "Search", icon: Search },
@@ -1993,10 +2040,10 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                       <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
-                        className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-medium transition-all ${
+                        className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-medium backdrop-blur-md transition-all ${
                           active
-                            ? "bg-gradient-to-r from-[#9333EA]/25 to-[#F472B6]/20 text-white border border-[#F472B6]/35"
-                            : "text-white/50 hover:text-white/85 hover:bg-white/[0.04] border border-transparent"
+                            ? "bg-gradient-to-r from-[#9333EA]/35 to-[#F472B6]/25 text-white border border-[#F472B6]/45"
+                            : "bg-black/20 text-white/60 hover:text-white hover:bg-black/35 border border-white/[0.05]"
                         }`}
                       >
                         <Icon className={`w-3.5 h-3.5 ${active ? "text-[#F472B6]" : ""}`} />
@@ -2010,13 +2057,13 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                 {activeTab === "discover" && (
                   <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-6 pb-6">
                     {isLoadingHome ? (
-                      <div className="flex flex-col items-center justify-center py-20 gap-3 text-white/45">
+                      <div className="flex flex-col items-center justify-center py-20 gap-3 text-white/55">
                         <Loader2 className="w-6 h-6 text-[#F472B6] animate-spin" />
                         <span className="text-xs font-mono">Loading recommendations...</span>
                       </div>
                     ) : homeShelves.length === 0 ? (
-                      <div className="text-center py-16 text-white/45 space-y-2">
-                        <Compass className="w-8 h-8 mx-auto opacity-40" />
+                      <div className="text-center py-16 text-white/55 space-y-2">
+                        <Compass className="w-8 h-8 mx-auto opacity-50" />
                         <p className="text-sm">Could not load recommendations right now.</p>
                         <button onClick={() => setActiveTab("search")} className="text-xs text-[#F472B6] underline">
                           Use Search instead
@@ -2025,7 +2072,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                     ) : (
                       homeShelves.map((shelf, sIdx) => (
                         <div key={shelf.title} className="space-y-2.5">
-                          <h3 className="text-xs font-mono uppercase tracking-widest text-white/55 px-1">
+                          <h3 className="text-xs font-mono uppercase tracking-widest text-white/70 px-1 drop-shadow">
                             {shelf.title}
                           </h3>
                           <div className="space-y-2">
@@ -2049,17 +2096,17 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                       }}
                       className="flex items-center gap-2 mb-4 flex-shrink-0"
                     >
-                      <div className="flex-1 flex items-center gap-2.5 bg-white/[0.06] border border-white/10 focus-within:border-[#F472B6]/60 rounded-2xl px-4 py-3 transition-colors">
+                      <div className="flex-1 flex items-center gap-2.5 bg-black/40 backdrop-blur-md border border-white/15 focus-within:border-[#F472B6]/60 rounded-2xl px-4 py-3 transition-colors">
                         <Search className="w-4 h-4 text-[#F472B6] flex-shrink-0" />
                         <input
                           type="text"
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
                           placeholder="Search any song, artist, or album on YT Music..."
-                          className="flex-1 min-w-0 bg-transparent text-sm text-white focus:outline-none placeholder:text-white/35"
+                          className="flex-1 min-w-0 bg-transparent text-sm text-white focus:outline-none placeholder:text-white/45"
                         />
                         {searchQuery && (
-                          <button type="button" onClick={() => setSearchQuery("")} className="text-white/40 hover:text-white">
+                          <button type="button" onClick={() => setSearchQuery("")} className="text-white/50 hover:text-white">
                             <X className="w-4 h-4" />
                           </button>
                         )}
@@ -2068,22 +2115,22 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
 
                     <div className="flex-1 overflow-y-auto space-y-2 pr-1 pb-4">
                       {isSearching ? (
-                        <div className="flex flex-col items-center justify-center py-16 gap-3 text-white/45">
+                        <div className="flex flex-col items-center justify-center py-16 gap-3 text-white/55">
                           <Loader2 className="w-6 h-6 text-[#F472B6] animate-spin" />
                           <span className="text-xs font-mono">Searching YouTube Music...</span>
                         </div>
                       ) : searchResults.length > 0 ? (
                         searchResults.map((track, idx) => renderStreamTrackRow(track, searchResults, true, `s-${idx}`))
                       ) : searchQuery.trim() ? (
-                        <p className="text-center text-xs text-white/40 py-14">No songs found for “{searchQuery}”.</p>
+                        <p className="text-center text-xs text-white/55 py-14">No songs found for “{searchQuery}”.</p>
                       ) : (
                         <div className="flex flex-col items-center justify-center text-center py-14 space-y-4">
-                          <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center">
-                            <Search className="w-6 h-6 text-[#F472B6]/80" />
+                          <div className="w-14 h-14 rounded-2xl bg-black/35 border border-white/10 backdrop-blur-md flex items-center justify-center">
+                            <Search className="w-6 h-6 text-[#F472B6]/90" />
                           </div>
                           <div>
-                            <p className="text-sm text-white/85 font-medium">Play or Queue anything in the Room</p>
-                            <p className="text-xs text-white/40 mt-1 max-w-xs">
+                            <p className="text-sm text-white font-medium">Play or Queue anything in the Room</p>
+                            <p className="text-xs text-white/55 mt-1 max-w-xs">
                               Tap a song to play right now, or tap the + queue icon to play it after the current song (or hit Next to skip straight to it).
                             </p>
                           </div>
@@ -2092,7 +2139,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                               <button
                                 key={chip}
                                 onClick={() => setSearchQuery(chip)}
-                                className="text-[11px] bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-white/75 px-3 py-1.5 rounded-full transition-colors"
+                                className="text-[11px] bg-black/35 hover:bg-black/55 backdrop-blur-md border border-white/15 text-white/85 px-3 py-1.5 rounded-full transition-colors"
                               >
                                 {chip}
                               </button>
@@ -2107,11 +2154,9 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                 {/* TAB 3: SHARED ROOM QUEUE + AUTO-RECOMMENDED RADIO */}
                 {activeTab === "upnext" && (
                   <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-6 pb-6">
-                    
-                    {/* SECTION A: UPCOMING ROOM QUEUE */}
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between px-1">
-                        <span className="text-xs font-mono uppercase tracking-widest text-[#00c896] flex items-center gap-1.5">
+                        <span className="text-xs font-mono uppercase tracking-widest text-[#34d399] flex items-center gap-1.5 drop-shadow">
                           <ListPlus className="w-3.5 h-3.5" /> Room Queue ({manualQueue.length})
                         </span>
                         {manualQueue.length > 0 && (
@@ -2124,7 +2169,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                             </button>
                             <button
                               onClick={clearUpcomingQueue}
-                              className="text-[11px] text-white/45 hover:text-red-400 transition-colors"
+                              className="text-[11px] text-white/55 hover:text-red-400 transition-colors"
                             >
                               Clear
                             </button>
@@ -2133,8 +2178,8 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                       </div>
 
                       {manualQueue.length === 0 ? (
-                        <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-5 text-center text-xs text-white/40">
-                          Queue is empty. Tap <ListPlus className="w-3.5 h-3.5 inline mx-0.5 text-[#00c896]" /> on any song to line it up next—then let it play automatically or hit Next to skip to it.
+                        <div className="rounded-2xl border border-dashed border-white/15 bg-black/25 backdrop-blur-md px-4 py-5 text-center text-xs text-white/55">
+                          Queue is empty. Tap <ListPlus className="w-3.5 h-3.5 inline mx-0.5 text-[#34d399]" /> on any song to line it up next—then let it play automatically or hit Next to skip to it.
                         </div>
                       ) : (
                         <div className="space-y-2">
@@ -2142,7 +2187,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                             <div
                               key={`q-${track.id}-${idx}`}
                               onClick={() => playFromUpcomingQueue(idx)}
-                              className="group flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-2xl border border-[#00c896]/25 bg-[#00A884]/[0.07] hover:bg-[#00A884]/[0.12] transition-all cursor-pointer"
+                              className="group flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-2xl border border-[#00c896]/35 bg-[#00A884]/15 hover:bg-[#00A884]/25 backdrop-blur-md transition-all cursor-pointer"
                             >
                               <div className="flex items-center gap-3 min-w-0 flex-1">
                                 <span className="text-[11px] font-mono text-[#34d399] w-4 text-center flex-shrink-0">
@@ -2160,7 +2205,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                                 </div>
                                 <div className="min-w-0 flex-1 text-left">
                                   <p className="text-sm text-white font-medium truncate">{track.displayName}</p>
-                                  <p className="text-[11px] text-white/45 truncate">
+                                  <p className="text-[11px] text-white/60 truncate">
                                     {track.artist || "Queued Track"} • Tap to play now
                                   </p>
                                 </div>
@@ -2171,7 +2216,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                                   <button
                                     onClick={(e) => moveQueueItemToTop(idx, e)}
                                     title="Move to top of queue"
-                                    className="p-1.5 rounded-lg text-white/45 hover:text-[#34d399] hover:bg-white/[0.08] transition-colors"
+                                    className="p-1.5 rounded-lg text-white/55 hover:text-[#34d399] hover:bg-white/[0.1] transition-colors"
                                   >
                                     <ArrowUp className="w-4 h-4" />
                                   </button>
@@ -2179,7 +2224,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                                 <button
                                   onClick={(e) => removeFromUpcomingQueue(idx, e)}
                                   title="Remove from queue"
-                                  className="p-1.5 rounded-lg text-white/45 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                  className="p-1.5 rounded-lg text-white/55 hover:text-red-400 hover:bg-red-500/15 transition-colors"
                                 >
                                   <X className="w-4 h-4" />
                                 </button>
@@ -2190,23 +2235,22 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                       )}
                     </div>
 
-                    {/* SECTION B: AUTO-RECOMMENDED RADIO */}
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between px-1">
-                        <span className="text-xs font-mono uppercase tracking-widest text-white/50">
+                        <span className="text-xs font-mono uppercase tracking-widest text-white/65">
                           Auto-Recommended Radio
                         </span>
                         <span className="text-[11px] text-[#F472B6]">After queue finishes</span>
                       </div>
 
                       {isLoadingUpNext ? (
-                        <div className="flex flex-col items-center justify-center py-10 gap-3 text-white/45">
+                        <div className="flex flex-col items-center justify-center py-10 gap-3 text-white/55">
                           <Loader2 className="w-5 h-5 text-[#F472B6] animate-spin" />
                           <span className="text-xs font-mono">Loading related tracks...</span>
                         </div>
                       ) : upNextTracks.length === 0 ? (
-                        <div className="text-center py-10 text-white/40 space-y-1.5">
-                          <Radio className="w-8 h-8 mx-auto opacity-30" />
+                        <div className="text-center py-10 text-white/50 space-y-1.5">
+                          <Radio className="w-8 h-8 mx-auto opacity-40" />
                           <p className="text-xs">Play any YouTube Music track to fill auto-radio.</p>
                         </div>
                       ) : (
@@ -2229,14 +2273,14 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                 {activeTab === "vault" && (
                   <div className="flex-1 min-h-0 flex flex-col p-4 sm:p-5">
                     <form onSubmit={handleImportLink} className="flex items-center gap-2 mb-3.5 flex-shrink-0">
-                      <div className="flex-1 flex items-center gap-2 bg-white/[0.05] border border-white/10 focus-within:border-[#F472B6]/60 rounded-2xl px-3.5 py-2.5 transition-colors">
+                      <div className="flex-1 flex items-center gap-2 bg-black/40 backdrop-blur-md border border-white/15 focus-within:border-[#F472B6]/60 rounded-2xl px-3.5 py-2.5 transition-colors">
                         <Link2 className="w-4 h-4 text-[#F472B6] flex-shrink-0" />
                         <input
                           type="text"
                           value={linkInput}
                           onChange={(e) => setLinkInput(e.target.value)}
                           placeholder="Paste YT Music playlist (Unlisted/Public) or song link..."
-                          className="flex-1 min-w-0 bg-transparent text-xs sm:text-sm text-white focus:outline-none placeholder:text-white/35"
+                          className="flex-1 min-w-0 bg-transparent text-xs sm:text-sm text-white focus:outline-none placeholder:text-white/45"
                         />
                       </div>
                       <button
@@ -2250,18 +2294,18 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                     </form>
 
                     <div className="flex items-center justify-between mb-2 px-1 flex-shrink-0">
-                      <span className="text-xs font-mono uppercase tracking-widest text-white/45">
+                      <span className="text-xs font-mono uppercase tracking-widest text-white/65">
                         Saved For Both Of You
                       </span>
-                      <span className="text-[11px] text-white/35">Queue, play, or rename</span>
+                      <span className="text-[11px] text-white/45">Queue, play, or rename</span>
                     </div>
 
                     <div className="flex-1 overflow-y-auto space-y-2 pr-1 pb-4">
                       {vaultTracks.length === 0 ? (
-                        <div className="text-center py-14 text-white/40 space-y-2">
-                          <Music className="w-9 h-9 mx-auto opacity-30" />
+                        <div className="text-center py-14 text-white/50 space-y-2">
+                          <Music className="w-9 h-9 mx-auto opacity-40" />
                           <p className="text-sm">Your shared Vault playlist is empty.</p>
-                          <p className="text-xs text-white/30">
+                          <p className="text-xs text-white/40">
                             Tap the heart on any song in Search/Discover, or import your YT Music playlist above.
                           </p>
                         </div>
@@ -2278,10 +2322,10 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                                 if (isCurrent) togglePlayPauseCurrent();
                                 else playTrackFromContext(track, vaultTracks, false);
                               }}
-                              className={`group flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-2xl border transition-all cursor-pointer ${
+                              className={`group flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-2xl border backdrop-blur-md transition-all cursor-pointer ${
                                 isCurrent
-                                  ? "bg-gradient-to-r from-[#9333EA]/20 to-[#F472B6]/15 border-[#F472B6]/40 shadow-lg"
-                                  : "bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]"
+                                  ? "bg-gradient-to-r from-[#9333EA]/30 to-[#F472B6]/20 border-[#F472B6]/45 shadow-lg"
+                                  : "bg-black/30 border-white/[0.08] hover:bg-black/45"
                               }`}
                             >
                               <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -2298,7 +2342,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                                   ) : isCurrent ? (
                                     <Play className="w-4 h-4 text-[#F472B6] ml-0.5" />
                                   ) : (
-                                    <span className="text-xs font-mono text-white/55">{idx + 1}</span>
+                                    <span className="text-xs font-mono text-white/65">{idx + 1}</span>
                                   )}
                                 </div>
 
@@ -2316,7 +2360,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                                       value={editNameValue}
                                       onChange={(e) => setEditNameValue(e.target.value)}
                                       autoFocus
-                                      className="flex-1 min-w-0 bg-black/50 border border-[#F472B6]/60 text-white text-sm rounded-lg px-2.5 py-1.5 focus:outline-none"
+                                      className="flex-1 min-w-0 bg-black/60 border border-[#F472B6]/60 text-white text-sm rounded-lg px-2.5 py-1.5 focus:outline-none"
                                     />
                                     <button
                                       type="submit"
@@ -2335,14 +2379,14 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                                   </form>
                                 ) : (
                                   <div className="min-w-0 flex-1 text-left">
-                                    <p className={`text-sm truncate ${isCurrent ? "text-white font-semibold" : "text-white/85"}`}>
+                                    <p className={`text-sm truncate ${isCurrent ? "text-white font-semibold" : "text-white/90"}`}>
                                       {track.displayName}
                                     </p>
                                     <div className="flex items-center gap-1.5 mt-0.5">
-                                      <span className={`text-[9px] font-mono uppercase px-1.5 py-[1px] rounded ${track.source === "youtube" ? "bg-red-500/15 text-red-300" : "bg-purple-500/15 text-purple-300"}`}>
+                                      <span className={`text-[9px] font-mono uppercase px-1.5 py-[1px] rounded ${track.source === "youtube" ? "bg-red-500/20 text-red-200" : "bg-purple-500/20 text-purple-200"}`}>
                                         {track.source === "youtube" ? "YT" : "MP3"}
                                       </span>
-                                      <span className="text-[11px] text-white/40 truncate">
+                                      <span className="text-[11px] text-white/55 truncate">
                                         {track.artist || "Vault Track"}
                                       </span>
                                     </div>
@@ -2355,14 +2399,14 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                                   <button
                                     onClick={(e) => addToUpcomingQueue(track, e)}
                                     title="Add to Room Queue"
-                                    className="p-2 rounded-xl text-white/45 hover:text-[#00c896] hover:bg-[#00c896]/10 transition-colors"
+                                    className="p-2 rounded-xl text-white/55 hover:text-[#00c896] hover:bg-[#00c896]/15 transition-colors"
                                   >
                                     <ListPlus className="w-4 h-4" />
                                   </button>
                                   <button
                                     onClick={(e) => startRenaming(track, e)}
                                     title="Rename song for both"
-                                    className="p-2 rounded-xl text-white/40 hover:text-[#F472B6] hover:bg-white/[0.07] transition-colors"
+                                    className="p-2 rounded-xl text-white/50 hover:text-[#F472B6] hover:bg-white/[0.1] transition-colors"
                                   >
                                     <Pencil className="w-4 h-4" />
                                   </button>
@@ -2370,7 +2414,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                                     <button
                                       onClick={(e) => toggleSaveToVault(track, e)}
                                       title="Remove from Vault"
-                                      className="p-2 rounded-xl text-white/35 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                      className="p-2 rounded-xl text-white/45 hover:text-red-400 hover:bg-red-500/15 transition-colors"
                                     >
                                       <Trash2 className="w-4 h-4" />
                                     </button>
@@ -2391,7 +2435,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             {currentTrack && (
               <div
                 onClick={() => setMobilePlayerExpanded(true)}
-                className="lg:hidden relative z-20 bg-[#101720]/95 backdrop-blur-2xl border-t border-white/10 px-3.5 py-2.5 flex-shrink-0 cursor-pointer pb-[max(10px,env(safe-area-inset-bottom))]"
+                className="lg:hidden relative z-20 bg-[#0d141d]/90 backdrop-blur-2xl border-t border-white/15 px-3.5 py-2.5 flex-shrink-0 cursor-pointer pb-[max(10px,env(safe-area-inset-bottom))]"
               >
                 <div className="absolute top-0 left-0 right-0 h-[2px] bg-white/10">
                   <div
@@ -2419,7 +2463,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                       </div>
                       <div className="min-w-0 text-left">
                         <p className="text-xs font-semibold text-white truncate">{currentTrack.displayName}</p>
-                        <p className="text-[10px] text-white/45 truncate">
+                        <p className="text-[10px] text-white/55 truncate">
                           {manualQueue.length > 0
                             ? `Next: ${manualQueue[0].displayName}`
                             : currentTrack.artist || "Tap for controls"}
@@ -2436,7 +2480,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                       </button>
                       <button
                         onClick={playNext}
-                        className="relative p-2 text-white/75 hover:text-white"
+                        className="relative p-2 text-white/80 hover:text-white"
                         title="Next"
                       >
                         <SkipForward className="w-5 h-5" />
@@ -2460,16 +2504,26 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                   animate={{ y: 0 }}
                   exit={{ y: "100%" }}
                   transition={{ type: "spring", damping: 28, stiffness: 300 }}
-                  className="lg:hidden fixed inset-0 z-50 bg-[#070a0f] flex flex-col p-6"
+                  className="lg:hidden fixed inset-0 z-50 bg-[#070a0f] flex flex-col p-6 overflow-hidden"
                 >
-                  <div className="flex items-center justify-between mb-4">
+                  {activeRoomCover && (
+                    <div className="pointer-events-none absolute inset-0 z-0">
+                      <div
+                        className="absolute inset-0 bg-cover bg-center scale-105"
+                        style={{ backgroundImage: `url(${activeRoomCover})` }}
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-b from-[#070a0f]/75 via-[#070a0f]/65 to-[#070a0f]/92 backdrop-blur-[3px]" />
+                    </div>
+                  )}
+
+                  <div className="relative z-10 flex items-center justify-between mb-4">
                     <button
                       onClick={() => setMobilePlayerExpanded(false)}
-                      className="p-2 rounded-full bg-white/[0.06] text-white/80 hover:text-white"
+                      className="p-2 rounded-full bg-black/35 border border-white/15 text-white/85 hover:text-white"
                     >
                       <ChevronDown className="w-5 h-5" />
                     </button>
-                    <span className="text-[11px] font-mono uppercase tracking-widest text-white/45">
+                    <span className="text-[11px] font-mono uppercase tracking-widest text-white/65">
                       {inRoom ? `Music Room • ${activeListeners.length || 1} Live` : "Now Playing"}
                     </span>
                     <button
@@ -2477,7 +2531,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                         setMobilePlayerExpanded(false);
                         setActiveTab("upnext");
                       }}
-                      className="p-2 rounded-full bg-white/[0.06] text-white/80 hover:text-[#F472B6] relative"
+                      className="p-2 rounded-full bg-black/35 border border-white/15 text-white/85 hover:text-[#F472B6] relative"
                       title="Room Queue"
                     >
                       <ListMusic className="w-4 h-4" />
@@ -2489,7 +2543,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                     </button>
                   </div>
 
-                  <div className="flex-1 flex items-center justify-center">
+                  <div className="relative z-10 flex-1 flex items-center justify-center">
                     {renderFullPlayerDeck(true)}
                   </div>
                 </motion.div>
