@@ -100,7 +100,7 @@ export default function MasterVault() {
     <main className="relative bg-[#050505] text-white selection:bg-[#F472B6]/30 selection:text-[#F472B6] overflow-x-hidden font-sans">
       <div className="fixed inset-0 z-0 pointer-events-none bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#9333EA]/5 via-[#050505] to-[#050505]"></div>
       
-      <BackgroundAudio />
+      <BackgroundAudio identity={identity!} />
       
       <div className="relative z-10">
         <motion.button 
