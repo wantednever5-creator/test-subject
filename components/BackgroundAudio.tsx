@@ -43,8 +43,14 @@ declare global {
 }
 
 type YTPlayerInstance = {
-  loadVideoById: (videoId: string, startSeconds?: number) => void;
-  cueVideoById: (videoId: string, startSeconds?: number) => void;
+  loadVideoById: (
+    videoIdOrConfig: string | { videoId: string; startSeconds?: number },
+    startSeconds?: number
+  ) => void;
+  cueVideoById: (
+    videoIdOrConfig: string | { videoId: string; startSeconds?: number },
+    startSeconds?: number
+  ) => void;
   playVideo: () => void;
   pauseVideo: () => void;
   seekTo: (seconds: number, allowSeekAhead?: boolean) => void;
@@ -94,12 +100,20 @@ type RoomSyncPayload = {
   senderId: string;
   targetId?: string;
   echoReqSentAt?: number;
+  isHeartbeat?: boolean;
   track: MusicTrack | null;
   isPlaying: boolean;
   currentTime: number;
-  sentAt: number;
   manualQueue: MusicTrack[];
   note?: string;
+};
+
+type PendingSeekTarget = {
+  trackId: string;
+  targetTime: number;
+  anchoredAt: number; // Always local Date.now()
+  isPlaying: boolean;
+  attempts: number;
 };
 
 type RepeatMode = "all" | "one" | "off";
@@ -115,7 +129,7 @@ const formatDuration = (secs: number | null | undefined) => {
   return `${m}:${s < 10 ? "0" : ""}${s}`;
 };
 
-// Detect phones/tablets vs laptops/desktops so laptops never drop out of the room on tab switch
+// Detect phones/tablets vs laptops/desktops so laptops stay in the room across tab switches
 const isMobileDevice = (): boolean => {
   if (typeof window === "undefined") return false;
   const coarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches;
@@ -193,7 +207,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
   const [upNextTracks, setUpNextTracks] = useState<MusicTrack[]>([]);
   const [isLoadingUpNext, setIsLoadingUpNext] = useState(false);
 
-  // Player State (Silent/Idle by default until playing or joining the Room)
+  // Player State
   const [activeQueue, setActiveQueue] = useState<MusicTrack[]>([]);
   const [currentTrack, setCurrentTrack] = useState<MusicTrack | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -209,7 +223,11 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
   const [inRoom, setInRoom] = useState(false);
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>([]);
   const [roomActivity, setRoomActivity] = useState<string | null>(null);
-  const [pendingAudioUnlock, setPendingAudioUnlock] = useState<RoomSyncPayload | null>(null);
+  const [pendingAudioUnlock, setPendingAudioUnlock] = useState<{
+    track: MusicTrack;
+    targetTime: number;
+    anchoredAt: number;
+  } | null>(null);
 
   // Vault Import / Upload / Rename State
   const [linkInput, setLinkInput] = useState("");
@@ -220,7 +238,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
   const [isSavingName, setIsSavingName] = useState(false);
   const [savingVideoIds, setSavingVideoIds] = useState<Set<string>>(new Set());
 
-  // Refs
+  // Refs for Engines & Exact Sync
   const sessionIdRef = useRef<string>(`${identity}_${Math.random().toString(36).slice(2, 9)}`);
   const roomChannelRef = useRef<RealtimeChannel | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -228,6 +246,14 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
   const ytPlayerRef = useRef<YTPlayerInstance | null>(null);
   const ytReadyRef = useRef(false);
   const pendingYtCmdRef = useRef<{ videoId: string; startSeconds: number; autoplay: boolean } | null>(null);
+
+  // Armed exact-timestamp seek enforced once YouTube/HTML5 actually starts playing
+  const pendingSeekRef = useRef<PendingSeekTarget | null>(null);
+  // Tracks whether this device is the current timing controller (broadcasts heartbeats)
+  const isControllerRef = useRef<boolean>(false);
+  const receivedJoinSyncRef = useRef<boolean>(false);
+  const joinRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const needsPostBufferPulseRef = useRef<boolean>(false);
 
   const isSeekingRef = useRef(false);
   const fallbackTriedRef = useRef<Set<string>>(new Set());
@@ -249,6 +275,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
   const handleTrackEndRef = useRef<() => void>(() => {});
   const handleYtErrorRef = useRef<(code: number) => void>(() => {});
   const applyRemoteSyncRef = useRef<(payload: RoomSyncPayload) => void>(() => {});
+  const sendHeartbeatPulseRef = useRef<() => void>(() => {});
 
   useEffect(() => { inRoomRef.current = inRoom; }, [inRoom]);
   useEffect(() => { roomMembersRef.current = roomMembers; }, [roomMembers]);
@@ -264,7 +291,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
   // Exact cover picture ONLY while connected to the Music Room
   const activeRoomCover = inRoom && currentTrack?.thumbnail ? currentTrack.thumbnail : null;
 
-  // Broadcast active room cover art so Chat Vault can mirror it live while in the room
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.__vaultRoomCover = activeRoomCover;
@@ -286,7 +312,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     vaultTracks.filter((t) => t.source === "youtube" && t.videoId).map((t) => t.videoId!)
   );
 
-  // Active members currently connected inside the Music Room
   const activeListeners = roomMembers.filter((m) => m.inRoom);
   const remoteListeners = activeListeners.filter((m) => m.sessionId !== sessionIdRef.current);
   const remoteHostWithTrack =
@@ -310,7 +335,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     }, 3200);
   }, []);
 
-  const markRemoteAction = useCallback((durationMs = 1000) => {
+  const markRemoteAction = useCallback((durationMs = 1800) => {
     isRemoteActionRef.current = true;
     if (remoteGuardTimerRef.current) clearTimeout(remoteGuardTimerRef.current);
     remoteGuardTimerRef.current = setTimeout(() => {
@@ -332,7 +357,36 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     return currentTimeRef.current;
   }, []);
 
-  // Push our current presence metadata to the Discord-style Room channel
+  // Compute current exact target time from an armed pendingSeekRef
+  const computePendingTargetNow = (pending: PendingSeekTarget): number => {
+    if (!pending.isPlaying) return Math.max(0, pending.targetTime);
+    const elapsed = Math.max(0, (Date.now() - pending.anchoredAt) / 1000);
+    return Math.max(0, pending.targetTime + elapsed);
+  };
+
+  // Enforce pending seek on HTML5 audio once metadata/media is ready
+  const applyPendingAudioSeek = useCallback(() => {
+    const pending = pendingSeekRef.current;
+    const track = currentTrackRef.current;
+    const audio = audioRef.current;
+    if (!pending || !track || track.source !== "upload" || !audio) return;
+    if (pending.trackId !== track.id) return;
+    if (audio.readyState < 1) return;
+
+    const exactNow = computePendingTargetNow(pending);
+    if (Math.abs((audio.currentTime || 0) - exactNow) > 0.65 && pending.attempts < 3) {
+      pending.attempts += 1;
+      try {
+        audio.currentTime = exactNow;
+        setCurrentTime(exactNow);
+        currentTimeRef.current = exactNow;
+      } catch (_) {}
+    } else {
+      pendingSeekRef.current = null;
+    }
+  }, []);
+
+  // Push presence metadata to the Room channel
   const syncMyPresence = useCallback(
     (overrides?: Partial<RoomMember>) => {
       if (!roomChannelRef.current) return;
@@ -371,10 +425,10 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         senderId: sessionIdRef.current,
         targetId: overrides?.targetId,
         echoReqSentAt: overrides?.echoReqSentAt,
+        isHeartbeat: overrides?.isHeartbeat ?? false,
         track: nextTrack,
         isPlaying: nextPlaying,
         currentTime: nextTime,
-        sentAt: Date.now(),
         manualQueue: nextQueue,
         note: overrides?.note
       };
@@ -385,20 +439,51 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         payload
       });
 
-      syncMyPresence({
-        inRoom: true,
-        track: nextTrack,
-        isPlaying: nextPlaying,
-        baseTime: nextTime
-      });
+      if (!overrides?.isHeartbeat) {
+        syncMyPresence({
+          inRoom: true,
+          track: nextTrack,
+          isPlaying: nextPlaying,
+          baseTime: nextTime
+        });
+      }
     },
     [identity, getLiveTime, syncMyPresence]
   );
 
-  // Stop local playback & leave the room (never pauses the other person if they stay)
+  useEffect(() => {
+    sendHeartbeatPulseRef.current = () => {
+      if (!inRoomRef.current || !isControllerRef.current || !currentTrackRef.current) return;
+      broadcastRoomSync({
+        isHeartbeat: true,
+        track: currentTrackRef.current,
+        isPlaying: isPlayingRef.current,
+        currentTime: getLiveTime(),
+        manualQueue: manualQueueRef.current
+      });
+    };
+  }, [broadcastRoomSync, getLiveTime]);
+
+  // Continuous 3.5s sync heartbeat from the active controller so partner never drifts or misses a track switch
+  useEffect(() => {
+    if (!inRoom || !isPlaying || !currentTrack) return;
+    const interval = setInterval(() => {
+      if (!isControllerRef.current || isSeekingRef.current) return;
+      if (roomMembersRef.current.filter((m) => m.inRoom).length < 2) return;
+      sendHeartbeatPulseRef.current();
+    }, 3500);
+    return () => clearInterval(interval);
+  }, [inRoom, isPlaying, currentTrack]);
+
+  // Stop local playback & leave the room
   const leaveRoomAndStop = useCallback(
     (silent = false) => {
       if (endFallbackTimerRef.current) clearTimeout(endFallbackTimerRef.current);
+      if (joinRetryTimerRef.current) clearTimeout(joinRetryTimerRef.current);
+
+      pendingSeekRef.current = null;
+      isControllerRef.current = false;
+      needsPostBufferPulseRef.current = false;
 
       if (audioRef.current) {
         try {
@@ -433,8 +518,8 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
   );
 
   // 1. DEVICE-AWARE LIFECYCLE:
-  //    - Phones/Android: stops & leaves when locked or switched away
-  //    - Laptops/Desktops: stays in room across tab switches; ONLY leaves when site/tab is closed
+  //    - Phones: stops & leaves on screen lock / app switch
+  //    - Laptops: stays in room across tab switches; leaves only on close or clicking Leave
   useEffect(() => {
     const handleVisibility = () => {
       if (isMobileDevice() && document.visibilityState === "hidden") {
@@ -494,7 +579,9 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         const reqSentAt = payload?.reqSentAt as number | undefined;
         if (!requesterId || requesterId === sessionIdRef.current) return;
         if (!inRoomRef.current || shouldBlockBecauseHidden()) return;
+        if (!currentTrackRef.current && manualQueueRef.current.length === 0) return;
 
+        // Reply immediately with exact live position & shared upcoming queue
         channel.send({
           type: "broadcast",
           event: "room_sync",
@@ -503,12 +590,12 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             senderId: sessionIdRef.current,
             targetId: requesterId,
             echoReqSentAt: reqSentAt,
+            isHeartbeat: false,
             track: currentTrackRef.current,
             isPlaying: isPlayingRef.current,
             currentTime: getLiveTime(),
-            sentAt: Date.now(),
             manualQueue: manualQueueRef.current,
-            note: `Synced with ${identity}`
+            note: `Synced live with ${identity}`
           } as RoomSyncPayload
         });
       })
@@ -534,7 +621,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     };
   }, [identity, getLiveTime]);
 
-  // 3. Initialize Official YouTube IFrame Player API
+  // 3. Initialize Official YouTube IFrame Player API (with Exact-Seek Enforcement on PLAYING)
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -565,9 +652,9 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
               const cmd = pendingYtCmdRef.current;
               pendingYtCmdRef.current = null;
               if (cmd.autoplay) {
-                event.target.loadVideoById(cmd.videoId, cmd.startSeconds);
+                event.target.loadVideoById({ videoId: cmd.videoId, startSeconds: Math.floor(cmd.startSeconds) });
               } else {
-                event.target.cueVideoById(cmd.videoId, cmd.startSeconds);
+                event.target.cueVideoById({ videoId: cmd.videoId, startSeconds: Math.floor(cmd.startSeconds) });
               }
             }
           },
@@ -585,6 +672,31 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
               setPendingAudioUnlock(null);
               const d = event.target.getDuration();
               if (d && !isNaN(d)) setDuration(d);
+
+              // ENFORCE EXACT SYNC TIMESTAMP: If YouTube started at 0:00 while buffering, snap immediately!
+              const pending = pendingSeekRef.current;
+              const activeTrack = currentTrackRef.current;
+              if (pending && activeTrack && pending.trackId === activeTrack.id) {
+                const exactTarget = computePendingTargetNow(pending);
+                const actualNow = event.target.getCurrentTime?.() || 0;
+                if (Math.abs(actualNow - exactTarget) > 0.85 && pending.attempts < 3) {
+                  pending.attempts += 1;
+                  markRemoteAction(1400);
+                  event.target.seekTo(exactTarget, true);
+                  setCurrentTime(exactTarget);
+                  currentTimeRef.current = exactTarget;
+                } else {
+                  pendingSeekRef.current = null;
+                }
+              }
+
+              // If we are the controller and just finished buffering a new track, lock partner to our exact start beat
+              if (needsPostBufferPulseRef.current && isControllerRef.current) {
+                needsPostBufferPulseRef.current = false;
+                setTimeout(() => {
+                  sendHeartbeatPulseRef.current();
+                }, 250);
+              }
             } else if (event.data === window.YT.PlayerState.PAUSED) {
               if (!isRemoteActionRef.current) {
                 setIsPlaying(false);
@@ -624,9 +736,9 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         ytReadyRef.current = false;
       }
     };
-  }, []);
+  }, [markRemoteAction]);
 
-  // 4. Fetch Saved Vault Playlist (Supabase YT Tracks + Uploaded MP3s)
+  // 4. Fetch Saved Vault Playlist
   const fetchVaultMusic = useCallback(async () => {
     const [{ data: ytRows }, { data: files, error: storageErr }, { data: metaRows }] = await Promise.all([
       supabase.from("vault_yt_tracks").select("*").order("created_at", { ascending: false }),
@@ -827,11 +939,31 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       const suppressBroadcast = options?.suppressBroadcast ?? false;
 
       if (endFallbackTimerRef.current) clearTimeout(endFallbackTimerRef.current);
-      if (fromRemote) markRemoteAction(1100);
+      if (fromRemote) {
+        markRemoteAction(1800);
+        isControllerRef.current = false;
+        needsPostBufferPulseRef.current = false;
+      } else {
+        isControllerRef.current = true;
+        needsPostBufferPulseRef.current = shouldPlay;
+      }
 
       if (!inRoomRef.current) {
         setInRoom(true);
         inRoomRef.current = true;
+      }
+
+      // Arm exact seek target whenever starting at a non-zero timestamp or syncing from partner
+      if (startSec >= 0.75 || fromRemote) {
+        pendingSeekRef.current = {
+          trackId: track.id,
+          targetTime: startSec,
+          anchoredAt: Date.now(),
+          isPlaying: shouldPlay,
+          attempts: 0
+        };
+      } else {
+        pendingSeekRef.current = null;
       }
 
       setStatusNotice(null);
@@ -851,10 +983,23 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       if (track.source === "youtube" && track.videoId) {
         if (audioRef.current) audioRef.current.pause();
         if (ytPlayerRef.current && ytReadyRef.current) {
-          if (shouldPlay) ytPlayerRef.current.loadVideoById(track.videoId, startSec);
-          else ytPlayerRef.current.cueVideoById(track.videoId, startSec);
+          if (shouldPlay) {
+            ytPlayerRef.current.loadVideoById({
+              videoId: track.videoId,
+              startSeconds: Math.floor(startSec)
+            });
+          } else {
+            ytPlayerRef.current.cueVideoById({
+              videoId: track.videoId,
+              startSeconds: Math.floor(startSec)
+            });
+          }
         } else {
-          pendingYtCmdRef.current = { videoId: track.videoId, startSeconds: startSec, autoplay: shouldPlay };
+          pendingYtCmdRef.current = {
+            videoId: track.videoId,
+            startSeconds: startSec,
+            autoplay: shouldPlay
+          };
         }
         fetchUpNextForTrack(track, triggerRadio);
       } else if (track.source === "upload") {
@@ -865,20 +1010,16 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         }
         if (audioRef.current) {
           audioRef.current.src = track.url;
-          audioRef.current.currentTime = startSec;
+          audioRef.current.load();
           if (shouldPlay) {
             audioRef.current.play().catch(() => {
               setIsPlaying(false);
               isPlayingRef.current = false;
               if (fromRemote) {
                 setPendingAudioUnlock({
-                  sender: "Room",
-                  senderId: "remote",
                   track,
-                  isPlaying: true,
-                  currentTime: startSec,
-                  sentAt: Date.now(),
-                  manualQueue: options?.nextManualQueue ?? manualQueueRef.current
+                  targetTime: startSec,
+                  anchoredAt: Date.now()
                 });
               }
             });
@@ -907,6 +1048,8 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       e?.stopPropagation();
       setInRoom(true);
       inRoomRef.current = true;
+      isControllerRef.current = false;
+      receivedJoinSyncRef.current = false;
       setPendingAudioUnlock(null);
 
       const remoteInRoom = roomMembersRef.current.filter(
@@ -918,18 +1061,17 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         null;
 
       if (host?.track) {
-        const elapsed = host.isPlaying
-          ? Math.min(600, Math.max(0, (Date.now() - host.updatedAt) / 1000))
-          : 0;
-        const startAt = Math.max(0, (host.baseTime || 0) + elapsed);
-
+        // Kick off playback synchronously inside the tap gesture so Android unlocks unmuted audio.
+        // The authoritative RTT-compensated timestamp arrives ~150ms later via `request_room_state`
+        // and snaps to the exact second via `pendingSeekRef`!
+        const initialGuess = Math.max(0, host.baseTime || 0);
         playTrackFromContext(host.track, undefined, false, {
-          startSeconds: startAt,
+          startSeconds: initialGuess,
           fromRemote: true,
           autoplay: host.isPlaying,
           suppressBroadcast: true
         });
-        flashRoomActivity(`Joined ${host.user} in Music Room`);
+        flashRoomActivity(`Syncing live with ${host.user}...`);
       } else {
         flashRoomActivity("Joined Music Room");
       }
@@ -941,7 +1083,8 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         baseTime: host?.track ? host.baseTime : getLiveTime()
       });
 
-      if (roomChannelRef.current) {
+      const sendStateRequest = () => {
+        if (!roomChannelRef.current || !inRoomRef.current) return;
         roomChannelRef.current.send({
           type: "broadcast",
           event: "request_room_state",
@@ -950,81 +1093,149 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             reqSentAt: Date.now()
           }
         });
-      }
+      };
+
+      sendStateRequest();
+
+      // Backup retry in case the socket was still warming up on first join
+      if (joinRetryTimerRef.current) clearTimeout(joinRetryTimerRef.current);
+      joinRetryTimerRef.current = setTimeout(() => {
+        if (inRoomRef.current && !receivedJoinSyncRef.current) {
+          sendStateRequest();
+        }
+      }, 900);
     },
     [playTrackFromContext, flashRoomActivity, syncMyPresence, getLiveTime]
   );
 
-  // Apply incoming room sync from partner
+  // Apply incoming room sync or heartbeat from partner
   const applyRemoteSync = useCallback(
     (payload: RoomSyncPayload) => {
       if (!inRoomRef.current || shouldBlockBecauseHidden()) return;
+      if (payload.isHeartbeat && isSeekingRef.current) return;
       if (endFallbackTimerRef.current) clearTimeout(endFallbackTimerRef.current);
+
+      receivedJoinSyncRef.current = true;
+      isControllerRef.current = false;
 
       if (Array.isArray(payload.manualQueue)) {
         setManualQueue(payload.manualQueue);
         manualQueueRef.current = payload.manualQueue;
       }
 
-      if (payload.note) flashRoomActivity(payload.note);
+      if (payload.note && !payload.isHeartbeat) {
+        flashRoomActivity(payload.note);
+      }
+
       if (!payload.track) return;
 
+      // Clock-skew-free latency compensation:
+      // - Join replies echo OUR own `reqSentAt`, so RTT/2 uses only our local clock.
+      // - Live broadcasts/heartbeats add a fixed ~150ms transit compensation (never subtracts mismatched clocks).
       let latencySec = 0;
       if (payload.isPlaying) {
         if (typeof payload.echoReqSentAt === "number") {
-          latencySec = Math.min(2.5, Math.max(0, (Date.now() - payload.echoReqSentAt) / 2000));
+          latencySec = Math.min(2.0, Math.max(0, (Date.now() - payload.echoReqSentAt) / 2000));
         } else {
-          latencySec = Math.min(3, Math.max(0, (Date.now() - payload.sentAt) / 1000));
+          latencySec = 0.15;
         }
       }
-      const targetTime = Math.max(0, (payload.currentTime || 0) + latencySec);
+
+      const exactTargetTime = Math.max(0, (payload.currentTime || 0) + latencySec);
       const isSameTrack = currentTrackRef.current?.id === payload.track.id;
 
       if (!isSameTrack) {
         playTrackFromContext(payload.track, undefined, false, {
-          startSeconds: targetTime,
+          startSeconds: exactTargetTime,
           fromRemote: true,
           autoplay: payload.isPlaying,
           nextManualQueue: payload.manualQueue,
           suppressBroadcast: true
         });
       } else {
-        markRemoteAction(900);
-        const localTime = getLiveTime();
-        const needsSeek = Math.abs(localTime - targetTime) > 1.8;
+        // Always update the armed seek anchor so if the player is still buffering,
+        // `onStateChange -> PLAYING` (or `canplay` for MP3) snaps directly to exactTargetTime!
+        const driftThreshold = payload.isHeartbeat ? 1.5 : 0.85;
 
         if (payload.track.source === "youtube" && ytPlayerRef.current && ytReadyRef.current) {
-          if (needsSeek) {
-            ytPlayerRef.current.seekTo(targetTime, true);
-            setCurrentTime(targetTime);
-            currentTimeRef.current = targetTime;
+          const ytState = ytPlayerRef.current.getPlayerState?.();
+          const isActivelyPlaying =
+            Boolean(window.YT && ytState === window.YT.PlayerState.PLAYING);
+          const localTime = getLiveTime();
+          const drift = Math.abs(localTime - exactTargetTime);
+
+          if (!isActivelyPlaying) {
+            // Still buffering or paused: arm pendingSeekRef so PLAYING enforces the exact second!
+            pendingSeekRef.current = {
+              trackId: payload.track.id,
+              targetTime: exactTargetTime,
+              anchoredAt: Date.now(),
+              isPlaying: payload.isPlaying,
+              attempts: 0
+            };
+            setCurrentTime(exactTargetTime);
+            currentTimeRef.current = exactTargetTime;
+          } else if (drift > driftThreshold) {
+            markRemoteAction(1400);
+            pendingSeekRef.current = {
+              trackId: payload.track.id,
+              targetTime: exactTargetTime,
+              anchoredAt: Date.now(),
+              isPlaying: payload.isPlaying,
+              attempts: 1
+            };
+            ytPlayerRef.current.seekTo(exactTargetTime, true);
+            setCurrentTime(exactTargetTime);
+            currentTimeRef.current = exactTargetTime;
           }
+
           if (payload.isPlaying) {
-            ytPlayerRef.current.playVideo();
+            if (!isActivelyPlaying) {
+              markRemoteAction(1400);
+              ytPlayerRef.current.playVideo();
+            }
             setIsPlaying(true);
             isPlayingRef.current = true;
           } else {
+            markRemoteAction(1200);
             ytPlayerRef.current.pauseVideo();
             setIsPlaying(false);
             isPlayingRef.current = false;
             setPendingAudioUnlock(null);
           }
         } else if (payload.track.source === "upload" && audioRef.current) {
-          if (needsSeek) {
-            audioRef.current.currentTime = targetTime;
-            setCurrentTime(targetTime);
-            currentTimeRef.current = targetTime;
+          const audio = audioRef.current;
+          const localTime = audio.currentTime || 0;
+          const drift = Math.abs(localTime - exactTargetTime);
+
+          if (audio.readyState < 1) {
+            pendingSeekRef.current = {
+              trackId: payload.track.id,
+              targetTime: exactTargetTime,
+              anchoredAt: Date.now(),
+              isPlaying: payload.isPlaying,
+              attempts: 0
+            };
+          } else if (drift > driftThreshold) {
+            audio.currentTime = exactTargetTime;
+            setCurrentTime(exactTargetTime);
+            currentTimeRef.current = exactTargetTime;
           }
+
           if (payload.isPlaying) {
-            audioRef.current.play().catch(() => {
+            audio.play().catch(() => {
               setIsPlaying(false);
               isPlayingRef.current = false;
-              setPendingAudioUnlock(payload);
+              setPendingAudioUnlock({
+                track: payload.track!,
+                targetTime: exactTargetTime,
+                anchoredAt: Date.now()
+              });
             });
             setIsPlaying(true);
             isPlayingRef.current = true;
           } else {
-            audioRef.current.pause();
+            audio.pause();
             setIsPlaying(false);
             isPlayingRef.current = false;
             setPendingAudioUnlock(null);
@@ -1032,17 +1243,22 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         }
       }
 
-      syncMyPresence({
-        inRoom: true,
-        track: payload.track,
-        isPlaying: payload.isPlaying,
-        baseTime: targetTime
-      });
+      if (!payload.isHeartbeat) {
+        syncMyPresence({
+          inRoom: true,
+          track: payload.track,
+          isPlaying: payload.isPlaying,
+          baseTime: exactTargetTime
+        });
+      }
 
-      if (payload.isPlaying && payload.track.source === "youtube") {
+      // Mobile autoplay fallback check when a new track or unpause arrives remotely
+      if (!payload.isHeartbeat && payload.isPlaying && payload.track.source === "youtube") {
+        const expectedTrack = payload.track;
+        const unlockAnchorAt = Date.now();
         setTimeout(() => {
           if (!inRoomRef.current || shouldBlockBecauseHidden()) return;
-          if (currentTrackRef.current?.id !== payload.track?.id) return;
+          if (currentTrackRef.current?.id !== expectedTrack.id) return;
           const ytState = ytPlayerRef.current?.getPlayerState?.();
           if (
             ytState !== undefined &&
@@ -1050,9 +1266,13 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
             ytState !== window.YT.PlayerState.PLAYING &&
             ytState !== window.YT.PlayerState.BUFFERING
           ) {
-            setPendingAudioUnlock(payload);
+            setPendingAudioUnlock({
+              track: expectedTrack,
+              targetTime: exactTargetTime,
+              anchoredAt: unlockAnchorAt
+            });
           }
-        }, 1600);
+        }, 1800);
       }
     },
     [flashRoomActivity, playTrackFromContext, markRemoteAction, getLiveTime, syncMyPresence]
@@ -1062,16 +1282,14 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     applyRemoteSyncRef.current = applyRemoteSync;
   }, [applyRemoteSync]);
 
-  // Fixed TypeScript narrowing for payload.track
   const handleManualUnlock = (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const payload = pendingAudioUnlock;
-    if (!payload?.track) return;
-    const track = payload.track;
-    const elapsed = Math.min(30, Math.max(0, (Date.now() - payload.sentAt) / 1000));
-    const targetTime = Math.max(0, (payload.currentTime || 0) + elapsed);
+    const unlock = pendingAudioUnlock;
+    if (!unlock) return;
+    const elapsed = Math.max(0, (Date.now() - unlock.anchoredAt) / 1000);
+    const targetTime = Math.max(0, unlock.targetTime + elapsed);
     setPendingAudioUnlock(null);
-    playTrackFromContext(track, undefined, false, {
+    playTrackFromContext(unlock.track, undefined, false, {
       startSeconds: targetTime,
       fromRemote: true,
       autoplay: true,
@@ -1135,28 +1353,33 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       inRoomRef.current = true;
     }
 
+    isControllerRef.current = true;
+    pendingSeekRef.current = null;
+
     if (isPlaying) {
       setIsPlaying(false);
       isPlayingRef.current = false;
+      const pausedAt = getLiveTime();
       if (currentTrack.source === "youtube") ytPlayerRef.current?.pauseVideo();
       else audioRef.current?.pause();
 
-      broadcastRoomSync({ isPlaying: false, note: `${identity} paused` });
+      broadcastRoomSync({ isPlaying: false, currentTime: pausedAt, note: `${identity} paused` });
     } else {
       setStatusNotice(null);
       setPendingAudioUnlock(null);
       setIsPlaying(true);
       isPlayingRef.current = true;
+      const resumeAt = getLiveTime();
 
       if (currentTrack.source === "youtube" && currentTrack.videoId) {
         if (ytPlayerRef.current && ytReadyRef.current) {
           const loadedDur = ytPlayerRef.current.getDuration?.() || 0;
           if (loadedDur > 0) ytPlayerRef.current.playVideo();
-          else ytPlayerRef.current.loadVideoById(currentTrack.videoId, currentTimeRef.current);
+          else ytPlayerRef.current.loadVideoById({ videoId: currentTrack.videoId, startSeconds: Math.floor(resumeAt) });
         } else {
           pendingYtCmdRef.current = {
             videoId: currentTrack.videoId,
-            startSeconds: currentTimeRef.current,
+            startSeconds: resumeAt,
             autoplay: true
           };
         }
@@ -1168,7 +1391,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         });
       }
 
-      broadcastRoomSync({ isPlaying: true, note: `${identity} resumed` });
+      broadcastRoomSync({ isPlaying: true, currentTime: resumeAt, note: `${identity} resumed` });
     }
   };
 
@@ -1270,6 +1493,8 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
     if (queue.length === 0) return;
 
     if (getLiveTime() > 3) {
+      isControllerRef.current = true;
+      pendingSeekRef.current = null;
       setCurrentTime(0);
       currentTimeRef.current = 0;
       if (currentTrackRef.current?.source === "youtube") ytPlayerRef.current?.seekTo(0, true);
@@ -1288,6 +1513,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
   const handleTrackEnd = useCallback(() => {
     const advanceNow = () => {
       if (repeatMode === "one" && currentTrackRef.current) {
+        isControllerRef.current = true;
         setCurrentTime(0);
         currentTimeRef.current = 0;
         if (currentTrackRef.current.source === "youtube") {
@@ -1308,7 +1534,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
       .map((m) => m.sessionId)
       .sort();
 
-    const isLeader = inRoomIds.length <= 1 || inRoomIds[0] === sessionIdRef.current;
+    const isLeader = isControllerRef.current || inRoomIds.length <= 1 || inRoomIds[0] === sessionIdRef.current;
 
     if (isLeader) {
       advanceNow();
@@ -1329,6 +1555,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newTime = parseFloat(e.target.value);
+    pendingSeekRef.current = null;
     setCurrentTime(newTime);
     currentTimeRef.current = newTime;
     if (currentTrack?.source === "youtube") {
@@ -1340,6 +1567,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
 
   const commitSeekBroadcast = () => {
     isSeekingRef.current = false;
+    isControllerRef.current = true;
     if (inRoomRef.current) {
       broadcastRoomSync({
         currentTime: currentTimeRef.current,
@@ -1571,7 +1799,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
   // Reusable Full Player Deck
   const renderFullPlayerDeck = (isMobileModal = false) => (
     <div className="flex flex-col items-center justify-center w-full max-w-sm mx-auto">
-      {/* Album Art */}
       <div className="relative mb-5">
         <div
           className={`absolute -inset-4 rounded-3xl bg-gradient-to-tr from-[#9333EA] to-[#F472B6] blur-3xl transition-opacity duration-700 ${
@@ -1595,7 +1822,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         </div>
       </div>
 
-      {/* Title, Artist & Save Heart */}
       <div className="w-full flex items-center justify-between gap-3 mb-4 px-1">
         <div className="min-w-0 text-left flex-1">
           <h3 className="text-lg font-semibold text-white truncate drop-shadow">
@@ -1625,7 +1851,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         )}
       </div>
 
-      {/* Tap to Unlock Audio if Mobile Blocked Remote Autoplay */}
       {pendingAudioUnlock && (
         <button
           onClick={handleManualUnlock}
@@ -1635,7 +1860,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         </button>
       )}
 
-      {/* Status / Error Banner */}
       <AnimatePresence>
         {statusNotice && (
           <motion.div
@@ -1833,7 +2057,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
 
   return (
     <>
-      {/* Persistent HTML5 Audio Engine (Uploaded MP3s) */}
+      {/* Persistent HTML5 Audio Engine (Uploaded MP3s — applies pending exact seek once ready) */}
       <audio
         ref={audioRef}
         muted={isMuted}
@@ -1845,6 +2069,21 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
         onLoadedMetadata={() => {
           if (currentTrack?.source === "upload") {
             setDuration(audioRef.current?.duration || 0);
+            applyPendingAudioSeek();
+          }
+        }}
+        onCanPlay={() => {
+          if (currentTrack?.source === "upload") {
+            applyPendingAudioSeek();
+          }
+        }}
+        onPlay={() => {
+          if (currentTrack?.source === "upload") {
+            applyPendingAudioSeek();
+            if (needsPostBufferPulseRef.current && isControllerRef.current) {
+              needsPostBufferPulseRef.current = false;
+              setTimeout(() => sendHeartbeatPulseRef.current(), 200);
+            }
           }
         }}
         onEnded={() => {
@@ -1992,7 +2231,6 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
               </label>
             </div>
 
-            {/* DISCORD-STYLE VOICE / MUSIC ROOM BAR */}
             {renderDiscordRoomBar()}
 
             {/* Mobile Toast Notice */}
@@ -2013,15 +2251,11 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
 
             {/* Main Body Split */}
             <div className="relative z-10 flex-1 min-h-0 flex flex-col lg:flex-row max-w-6xl w-full mx-auto overflow-hidden">
-              
-              {/* DESKTOP LEFT PANEL */}
               <div className="hidden lg:flex w-[40%] p-8 flex-col items-center justify-center border-r border-white/[0.08] flex-shrink-0">
                 {renderFullPlayerDeck(false)}
               </div>
 
-              {/* MAIN CONTENT AREA: 4-Tab Browser */}
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                
                 {/* Navigation Tabs */}
                 <div className="grid grid-cols-4 gap-1 px-3 sm:px-6 pt-3 pb-2 border-b border-white/[0.08] flex-shrink-0">
                   {[
@@ -2053,7 +2287,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                   })}
                 </div>
 
-                {/* TAB 1: DISCOVER / RECOMMENDATIONS */}
+                {/* TAB 1: DISCOVER */}
                 {activeTab === "discover" && (
                   <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-6 pb-6">
                     {isLoadingHome ? (
@@ -2086,7 +2320,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                   </div>
                 )}
 
-                {/* TAB 2: SEARCH ALL OF YOUTUBE MUSIC */}
+                {/* TAB 2: SEARCH */}
                 {activeTab === "search" && (
                   <div className="flex-1 min-h-0 flex flex-col p-4 sm:p-5">
                     <form
@@ -2151,7 +2385,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                   </div>
                 )}
 
-                {/* TAB 3: SHARED ROOM QUEUE + AUTO-RECOMMENDED RADIO */}
+                {/* TAB 3: SHARED ROOM QUEUE + AUTO-RADIO */}
                 {activeTab === "upnext" && (
                   <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-6 pb-6">
                     <div className="space-y-2.5">
@@ -2269,7 +2503,7 @@ export default function BackgroundAudio({ identity = "Vault User" }: { identity?
                   </div>
                 )}
 
-                {/* TAB 4: SHARED VAULT PLAYLIST + IMPORT YT PLAYLIST */}
+                {/* TAB 4: SHARED VAULT PLAYLIST */}
                 {activeTab === "vault" && (
                   <div className="flex-1 min-h-0 flex flex-col p-4 sm:p-5">
                     <form onSubmit={handleImportLink} className="flex items-center gap-2 mb-3.5 flex-shrink-0">
