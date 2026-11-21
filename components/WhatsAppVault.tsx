@@ -7,7 +7,7 @@ import {
   Smile, Send, CheckCheck, X, Trash2, Reply, SmilePlus,
   Image as ImageIcon, Download, Palette, ArrowLeft, Search,
   Upload, ChevronUp, ChevronDown, Loader2, Link2, Sparkles,
-  ArrowDown, Gift, Maximize, Copy, Check
+  ArrowDown, Gift, Maximize, Copy, Check, Music
 } from "lucide-react";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
@@ -225,6 +225,9 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   const [mobileSheetMsg, setMobileSheetMsg] = useState<Message | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Wallpaper & Dynamic Music Room Cover State
+  const [useSongCoverBg, setUseSongCoverBg] = useState<boolean>(true);
+  const [roomCoverBg, setRoomCoverBg] = useState<string | null>(null);
   const [currentBgStyle, setCurrentBgStyle] = useState<string>("bg-[#080d12]");
   const [customBgImage, setCustomBgImage] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -253,6 +256,22 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  // Listen to live cover art updates from BackgroundAudio (only non-null while inside the Music Room)
+  useEffect(() => {
+    const win = window as Window & { __vaultRoomCover?: string | null };
+    setRoomCoverBg(win.__vaultRoomCover || null);
+
+    const onCoverChange = (e: Event) => {
+      const detail = (e as CustomEvent<{ coverUrl: string | null }>).detail;
+      setRoomCoverBg(detail?.coverUrl || null);
+    };
+
+    window.addEventListener("vault-room-cover", onCoverChange);
+    return () => window.removeEventListener("vault-room-cover", onCoverChange);
+  }, []);
+
+  const activeSongCover = useSongCoverBg && roomCoverBg ? roomCoverBg : null;
 
   // Atomic merge: deduplicates, sorts strictly chronologically, and preserves scroll offset on prepends
   const mergeMessages = useCallback((incoming: Message[]) => {
@@ -334,7 +353,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     }
 
     setIsInitialLoading(false);
-    // Delay enabling `startReached` slightly so Virtuoso settles at the bottom first
     setTimeout(() => {
       canPaginateRef.current = true;
     }, 450);
@@ -364,7 +382,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
       if (oldestMsg) {
         query = query.lt("created_at", oldestMsg.created_at);
       } else if (unlocked) {
-        // 48h window was empty; pull older messages prior to cutoff
         query = query.lt("created_at", cutoffRef.current);
       }
 
@@ -457,7 +474,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         mergeMessages([incoming]);
 
         if (incoming.sender === identity) {
-          // Always scroll down when YOU send a message
           setUnreadCount(0);
           setTimeout(() => {
             virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" });
@@ -468,7 +484,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
             new Notification(incoming.sender, { body: incoming.text || "Sent a media file" });
           }
 
-          // ANTI-SCROLL-HIJACK: Never yank the user down if they are scrolled up reading!
           if (isAtBottomRef.current) {
             setTimeout(() => {
               virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" });
@@ -675,9 +690,11 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     const reader = new FileReader();
     reader.onloadend = () => {
       setCustomBgImage(reader.result as string);
+      setUseSongCoverBg(false);
       setShowSettings(false);
     };
     reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
   const executeMagicLink = async (targetMsg: Message) => {
@@ -1008,17 +1025,41 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
             className="absolute top-[64px] right-3 bg-[#121a22]/95 backdrop-blur-2xl border border-white/10 p-4 rounded-2xl z-50 shadow-2xl w-64 text-left"
           >
             <p className="text-[10px] text-white/45 font-mono mb-2 uppercase tracking-widest">Chat Theme</p>
+
+            {/* Dynamic Music Room Cover Option */}
+            <button
+              onClick={() => {
+                setUseSongCoverBg(true);
+                setShowSettings(false);
+              }}
+              className={`w-full flex items-center justify-between text-xs px-3 py-2.5 rounded-xl text-left transition-colors mb-2 border ${
+                useSongCoverBg
+                  ? "bg-gradient-to-r from-[#9333EA]/25 to-[#F472B6]/20 border-[#F472B6]/45 text-white font-semibold"
+                  : "bg-white/[0.04] border-white/[0.06] text-white/80 hover:bg-white/[0.08]"
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <Music className="w-3.5 h-3.5 text-[#F472B6]" />
+                Live Song Cover
+              </span>
+              {roomCoverBg && (
+                <span className="w-2 h-2 rounded-full bg-[#00c896] animate-pulse" title="Room active" />
+              )}
+            </button>
+
+            <p className="text-[10px] text-white/35 font-mono mb-1.5 mt-2 uppercase tracking-widest">Static Wallpapers</p>
             <div className="space-y-1 mb-3">
               {WALLPAPERS.map((w) => (
                 <button
                   key={w.name}
                   onClick={() => {
+                    setUseSongCoverBg(false);
                     setCurrentBgStyle(w.class);
                     setCustomBgImage(null);
                     setShowSettings(false);
                   }}
                   className={`w-full text-xs px-3 py-2 rounded-xl text-left transition-colors ${
-                    currentBgStyle === w.class && !customBgImage
+                    !useSongCoverBg && currentBgStyle === w.class && !customBgImage
                       ? "bg-[#F472B6]/15 text-[#F472B6] font-semibold"
                       : "text-white/85 hover:bg-white/[0.06]"
                   }`}
@@ -1046,27 +1087,50 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
       {/* CHAT STREAM VIEWPORT */}
       <div
-        className={`flex-1 min-h-0 w-full relative transition-colors duration-500 ${!customBgImage ? currentBgStyle : ""}`}
+        className={`flex-1 min-h-0 w-full relative overflow-hidden transition-colors duration-500 ${!activeSongCover && !customBgImage ? currentBgStyle : ""}`}
         style={
-          customBgImage
+          !activeSongCover && customBgImage
             ? { backgroundImage: `url(${customBgImage})`, backgroundSize: "cover", backgroundPosition: "center" }
-            : {
+            : !activeSongCover
+            ? {
                 backgroundImage:
                   "radial-gradient(rgba(255,255,255,0.04) 1px, transparent 1px)",
                 backgroundSize: "22px 22px"
               }
+            : {}
         }
       >
-        {customBgImage && <div className="pointer-events-none absolute inset-0 bg-black/35" />}
+        {/* Dynamic Exact Song Cover Background (Only while in the Music Room & Live Song Cover is selected) */}
+        <AnimatePresence mode="wait">
+          {activeSongCover && (
+            <motion.div
+              key={activeSongCover}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.6 }}
+              className="pointer-events-none absolute inset-0 z-0"
+            >
+              <div
+                className="absolute inset-0 bg-cover bg-center"
+                style={{ backgroundImage: `url(${activeSongCover})` }}
+              />
+              <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/45 to-black/65" />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {!activeSongCover && customBgImage && <div className="pointer-events-none absolute inset-0 z-0 bg-black/35" />}
 
         {isInitialLoading ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-white/45">
+          <div className="relative z-10 w-full h-full flex flex-col items-center justify-center gap-3 text-white/45">
             <Loader2 className="w-6 h-6 text-[#00c896] animate-spin" />
             <span className="text-xs font-mono tracking-wider">Loading recent messages...</span>
           </div>
         ) : (
           <Virtuoso<Message, VirtuosoContext>
             ref={virtuosoRef}
+            className="relative z-10"
             data={messages}
             firstItemIndex={firstItemIndex}
             initialTopMostItemIndex={Math.max(0, messages.length - 1)}
@@ -1220,8 +1284,8 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                         msg.deleted
                           ? "bg-white/[0.04] border border-white/[0.07] text-white/45 italic"
                           : isMe
-                          ? "bg-gradient-to-br from-[#066957] to-[#024d40] text-[#EFF5F3] border border-[#10b981]/20"
-                          : "bg-[#161f29]/95 text-[#E8EEF2] border border-white/[0.06]"
+                          ? "bg-gradient-to-br from-[#066957]/95 to-[#024d40]/95 text-[#EFF5F3] border border-[#10b981]/20 backdrop-blur-sm"
+                          : "bg-[#161f29]/90 text-[#E8EEF2] border border-white/[0.08] backdrop-blur-sm"
                       } ${isHighlighted ? "ring-2 ring-[#F472B6] shadow-[0_0_20px_rgba(244,114,182,0.3)]" : ""}`}
                     >
                       {/* Quoted Reply Block */}
