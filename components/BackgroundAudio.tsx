@@ -5,9 +5,52 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Music, Play, Pause, Upload, Loader2, ArrowLeft,
   SkipBack, SkipForward, Shuffle, Repeat, Repeat1,
-  Volume2, VolumeX, Pencil, Check, X, Disc3
+  Volume2, VolumeX, Pencil, Check, X, Disc3,
+  Plus, Link2, Trash2, AlertCircle, Search,
+  Compass, Radio, ListMusic, Heart, ChevronDown
 } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
+
+declare global {
+  interface Window {
+    YT?: {
+      Player: new (
+        element: HTMLElement | string,
+        config: {
+          height?: string | number;
+          width?: string | number;
+          videoId?: string;
+          playerVars?: Record<string, string | number>;
+          events?: {
+            onReady?: (event: { target: YTPlayerInstance }) => void;
+            onStateChange?: (event: { data: number; target: YTPlayerInstance }) => void;
+            onError?: (event: { data: number }) => void;
+          };
+        }
+      ) => YTPlayerInstance;
+      PlayerState: {
+        ENDED: number;
+        PLAYING: number;
+        PAUSED: number;
+        BUFFERING: number;
+      };
+    };
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
+type YTPlayerInstance = {
+  loadVideoById: (videoId: string) => void;
+  playVideo: () => void;
+  pauseVideo: () => void;
+  seekTo: (seconds: number, allowSeekAhead?: boolean) => void;
+  setVolume: (volume: number) => void;
+  mute: () => void;
+  unMute: () => void;
+  getCurrentTime: () => number;
+  getDuration: () => number;
+  destroy: () => void;
+};
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || "",
@@ -15,29 +58,103 @@ const supabase = createClient(
 );
 
 type MusicTrack = {
-  fileName: string;
+  id: string;
+  source: "youtube" | "upload";
+  videoId?: string;
+  fileName?: string;
   displayName: string;
+  artist?: string;
   url: string;
+  thumbnail?: string;
+  duration?: number | null;
+};
+
+type HomeShelf = {
+  title: string;
+  items: MusicTrack[];
 };
 
 type RepeatMode = "all" | "one" | "off";
+type ActiveTab = "search" | "discover" | "upnext" | "vault";
 
 const cleanRawName = (fileName: string) =>
   fileName.replace(/^\d+_/, "").replace(/\.[^/.]+$/, "");
 
-const formatDuration = (secs: number) => {
+const formatDuration = (secs: number | null | undefined) => {
   if (!secs || isNaN(secs) || !isFinite(secs)) return "0:00";
   const m = Math.floor(secs / 60);
   const s = Math.floor(secs % 60);
   return `${m}:${s < 10 ? "0" : ""}${s}`;
 };
 
+const extractYouTubeId = (input: string): string | null => {
+  const trimmed = input.trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    const vParam = parsed.searchParams.get("v");
+    if (vParam && /^[a-zA-Z0-9_-]{11}$/.test(vParam)) return vParam;
+    if (parsed.hostname.includes("youtu.be")) {
+      const id = parsed.pathname.split("/").filter(Boolean)[0];
+      if (id && /^[a-zA-Z0-9_-]{11}$/.test(id)) return id;
+    }
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const idx = parts.findIndex((p) => p === "shorts" || p === "embed" || p === "live");
+    if (idx !== -1 && parts[idx + 1] && /^[a-zA-Z0-9_-]{11}$/.test(parts[idx + 1])) {
+      return parts[idx + 1];
+    }
+  } catch (_) {
+    const match = trimmed.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
+    if (match) return match[1];
+  }
+  return null;
+};
+
+const extractPlaylistId = (input: string): string | null => {
+  const trimmed = input.trim();
+  try {
+    const parsed = new URL(trimmed);
+    const list = parsed.searchParams.get("list");
+    if (list && list.length >= 10) return list;
+  } catch (_) {
+    const match = trimmed.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+    if (match) return match[1];
+  }
+  if (/^(PL|OLAK5uy_|RDCLAK|LM)[a-zA-Z0-9_-]+$/.test(trimmed)) return trimmed;
+  return null;
+};
+
+const apiItemToTrack = (item: any): MusicTrack => ({
+  id: `yt:${item.videoId}`,
+  source: "youtube",
+  videoId: item.videoId,
+  displayName: item.title || "Untitled Track",
+  artist: item.artist || "YouTube Music",
+  url: `https://www.youtube.com/watch?v=${item.videoId}`,
+  thumbnail: item.thumbnail || `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`,
+  duration: typeof item.duration === "number" ? item.duration : null
+});
+
 export default function BackgroundAudio() {
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
-  const [tracks, setTracks] = useState<MusicTrack[]>([]);
-  const [currentTrack, setCurrentTrack] = useState<MusicTrack | null>(null);
+  const [activeTab, setActiveTab] = useState<ActiveTab>("search");
+  const [mobilePlayerExpanded, setMobilePlayerExpanded] = useState(false);
 
-  // Playback Controls State (Muted / Paused by default)
+  // Playlists & Feeds
+  const [vaultTracks, setVaultTracks] = useState<MusicTrack[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<MusicTrack[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  const [homeShelves, setHomeShelves] = useState<HomeShelf[]>([]);
+  const [isLoadingHome, setIsLoadingHome] = useState(false);
+
+  const [upNextTracks, setUpNextTracks] = useState<MusicTrack[]>([]);
+  const [isLoadingUpNext, setIsLoadingUpNext] = useState(false);
+
+  // Active Queue & Player State (Paused by default)
+  const [activeQueue, setActiveQueue] = useState<MusicTrack[]>([]);
+  const [currentTrack, setCurrentTrack] = useState<MusicTrack | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(0.85);
@@ -45,164 +162,585 @@ export default function BackgroundAudio() {
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("all");
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [statusNotice, setStatusNotice] = useState<{ type: "error" | "info"; text: string } | null>(null);
 
-  // Upload & Rename State
+  // Vault Import / Upload / Rename State
+  const [linkInput, setLinkInput] = useState("");
+  const [isImportingLink, setIsImportingLink] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [editingFile, setEditingFile] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState("");
   const [isSavingName, setIsSavingName] = useState(false);
+  const [savingVideoIds, setSavingVideoIds] = useState<Set<string>>(new Set());
 
+  // Refs
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const ytContainerRef = useRef<HTMLDivElement | null>(null);
+  const ytPlayerRef = useRef<YTPlayerInstance | null>(null);
+  const ytReadyRef = useRef(false);
+  const pendingYtVideoIdRef = useRef<string | null>(null);
+  const isSeekingRef = useRef(false);
+  const fallbackTriedRef = useRef<Set<string>>(new Set());
 
-  // Fetch audio files + custom display names
-  const fetchMusic = useCallback(async () => {
-    const [{ data: files, error: storageErr }, { data: metaRows }] = await Promise.all([
+  const handleTrackEndRef = useRef<() => void>(() => {});
+  const handleYtErrorRef = useRef<(code: number) => void>(() => {});
+  const volumeRef = useRef(volume);
+  const isMutedRef = useRef(isMuted);
+
+  useEffect(() => {
+    volumeRef.current = volume;
+    isMutedRef.current = isMuted;
+  }, [volume, isMuted]);
+
+  const savedVideoIdSet = new Set(
+    vaultTracks.filter((t) => t.source === "youtube" && t.videoId).map((t) => t.videoId!)
+  );
+
+  // 1. Initialize Official YouTube IFrame Player API
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const initYouTubePlayer = () => {
+      if (!ytContainerRef.current || ytPlayerRef.current || !window.YT?.Player) return;
+
+      ytPlayerRef.current = new window.YT.Player(ytContainerRef.current, {
+        height: "200",
+        width: "200",
+        playerVars: {
+          autoplay: 0,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          modestbranding: 1,
+          playsinline: 1,
+          rel: 0,
+          origin: window.location.origin
+        },
+        events: {
+          onReady: (event) => {
+            ytReadyRef.current = true;
+            event.target.setVolume(Math.round(volumeRef.current * 100));
+            if (isMutedRef.current) event.target.mute();
+            else event.target.unMute();
+
+            if (pendingYtVideoIdRef.current) {
+              const vid = pendingYtVideoIdRef.current;
+              pendingYtVideoIdRef.current = null;
+              event.target.loadVideoById(vid);
+            }
+          },
+          onStateChange: (event) => {
+            if (!window.YT) return;
+            if (event.data === window.YT.PlayerState.ENDED) {
+              handleTrackEndRef.current();
+            } else if (event.data === window.YT.PlayerState.PLAYING) {
+              setIsPlaying(true);
+              const d = event.target.getDuration();
+              if (d && !isNaN(d)) setDuration(d);
+            } else if (event.data === window.YT.PlayerState.PAUSED) {
+              setIsPlaying(false);
+            }
+          },
+          onError: (event) => {
+            handleYtErrorRef.current(event.data);
+          }
+        }
+      });
+    };
+
+    if (window.YT?.Player) {
+      initYouTubePlayer();
+    } else {
+      const prevCallback = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => {
+        prevCallback?.();
+        initYouTubePlayer();
+      };
+
+      if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+        const tag = document.createElement("script");
+        tag.src = "https://www.youtube.com/iframe_api";
+        document.head.appendChild(tag);
+      }
+    }
+
+    return () => {
+      if (ytPlayerRef.current) {
+        try {
+          ytPlayerRef.current.destroy();
+        } catch (_) {}
+        ytPlayerRef.current = null;
+        ytReadyRef.current = false;
+      }
+    };
+  }, []);
+
+  // 2. Fetch Saved Vault Playlist (Supabase YT Tracks + Uploaded MP3s)
+  const fetchVaultMusic = useCallback(async () => {
+    const [{ data: ytRows }, { data: files, error: storageErr }, { data: metaRows }] = await Promise.all([
+      supabase.from("vault_yt_tracks").select("*").order("created_at", { ascending: false }),
       supabase.storage.from("vault_music").list(),
       supabase.from("vault_music_meta").select("file_name, display_name")
     ]);
 
-    if (storageErr || !files) return;
+    const combined: MusicTrack[] = [];
 
-    const metaMap = new Map<string, string>();
-    if (metaRows) {
-      metaRows.forEach((row: { file_name: string; display_name: string }) => {
-        metaMap.set(row.file_name, row.display_name);
+    if (ytRows) {
+      ytRows.forEach((row: any) => {
+        combined.push({
+          id: `yt:${row.video_id}`,
+          source: "youtube",
+          videoId: row.video_id,
+          displayName: row.display_name,
+          artist: row.artist || "YouTube Music",
+          url: `https://www.youtube.com/watch?v=${row.video_id}`,
+          thumbnail: row.thumbnail_url || `https://i.ytimg.com/vi/${row.video_id}/hqdefault.jpg`
+        });
       });
     }
 
-    const fetchedTracks: MusicTrack[] = files
-      .filter((f) => /\.(mp3|wav|m4a|ogg|aac)$/i.test(f.name))
-      .map((f) => ({
-        fileName: f.name,
-        displayName: metaMap.get(f.name) || cleanRawName(f.name),
-        url: supabase.storage.from("vault_music").getPublicUrl(f.name).data.publicUrl
-      }));
+    if (!storageErr && files) {
+      const metaMap = new Map<string, string>();
+      if (metaRows) {
+        metaRows.forEach((row: { file_name: string; display_name: string }) => {
+          metaMap.set(row.file_name, row.display_name);
+        });
+      }
 
-    setTracks(fetchedTracks);
+      files
+        .filter((f) => /\.(mp3|wav|m4a|ogg|aac)$/i.test(f.name))
+        .forEach((f) => {
+          combined.push({
+            id: `file:${f.name}`,
+            source: "upload",
+            fileName: f.name,
+            displayName: metaMap.get(f.name) || cleanRawName(f.name),
+            artist: "Uploaded Audio",
+            url: supabase.storage.from("vault_music").getPublicUrl(f.name).data.publicUrl
+          });
+        });
+    }
+
+    setVaultTracks(combined);
 
     setCurrentTrack((prev) => {
-      if (!prev) return fetchedTracks.length > 0 ? fetchedTracks[0] : null;
-      const updatedMatch = fetchedTracks.find((t) => t.fileName === prev.fileName);
-      return updatedMatch || prev;
+      if (!prev) return combined.length > 0 ? combined[0] : null;
+      const updated = combined.find((t) => t.id === prev.id);
+      return updated ? { ...prev, displayName: updated.displayName } : prev;
     });
   }, []);
 
   useEffect(() => {
-    fetchMusic();
-  }, [fetchMusic, isLibraryOpen]);
+    fetchVaultMusic();
+  }, [fetchVaultMusic, isLibraryOpen]);
 
-  // Realtime listener so song renames update live for both users
+  // Realtime sync for Vault playlist & song renames
   useEffect(() => {
-    const metaChannel = supabase
-      .channel("vault_music_meta_sync")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "vault_music_meta" },
-        (payload) => {
-          const row = payload.new as { file_name?: string; display_name?: string };
-          if (!row?.file_name || !row?.display_name) return;
-
-          setTracks((prev) =>
-            prev.map((t) =>
-              t.fileName === row.file_name
-                ? { ...t, displayName: row.display_name! }
-                : t
-            )
-          );
-          setCurrentTrack((prev) =>
-            prev && prev.fileName === row.file_name
-              ? { ...prev, displayName: row.display_name! }
-              : prev
-          );
-        }
-      )
+    const channel = supabase
+      .channel("vault_music_unified_sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "vault_yt_tracks" }, () => {
+        fetchVaultMusic();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "vault_music_meta" }, () => {
+        fetchVaultMusic();
+      })
       .subscribe();
 
     return () => {
-      supabase.removeChannel(metaChannel);
+      supabase.removeChannel(channel);
     };
+  }, [fetchVaultMusic]);
+
+  // 3. Load Discover / Recommendations Feed when Discover tab is opened
+  useEffect(() => {
+    if (!isLibraryOpen || activeTab !== "discover" || homeShelves.length > 0 || isLoadingHome) return;
+
+    const loadDiscover = async () => {
+      setIsLoadingHome(true);
+      try {
+        const res = await fetch("/api/ytmusic?action=home");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.shelves)) {
+            setHomeShelves(
+              data.shelves.map((s: any) => ({
+                title: s.title,
+                items: (s.items || []).map(apiItemToTrack)
+              }))
+            );
+          }
+        }
+      } catch (_) {} finally {
+        setIsLoadingHome(false);
+      }
+    };
+    loadDiscover();
+  }, [isLibraryOpen, activeTab, homeShelves.length, isLoadingHome]);
+
+  // 4. Debounced Live YouTube Music Search
+  const runSearch = useCallback(async (query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setSearchResults([]);
+      return;
+    }
+    setIsSearching(true);
+    try {
+      const res = await fetch(`/api/ytmusic?action=search&q=${encodeURIComponent(trimmed)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(Array.isArray(data.tracks) ? data.tracks.map(apiItemToTrack) : []);
+      }
+    } catch (_) {} finally {
+      setIsSearching(false);
+    }
   }, []);
 
-  // Audio playback sync
   useEffect(() => {
-    if (!audioRef.current || !currentTrack) return;
-    if (isPlaying) {
-      audioRef.current.play().catch(() => setIsPlaying(false));
-    } else {
-      audioRef.current.pause();
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      return;
     }
-  }, [currentTrack?.url, isPlaying]);
+    const timer = setTimeout(() => runSearch(searchQuery), 380);
+    return () => clearTimeout(timer);
+  }, [searchQuery, runSearch]);
 
+  // 5. Fetch YT Music "Up Next" Radio Queue whenever a YT track plays
+  const fetchUpNextForTrack = useCallback(async (track: MusicTrack, makeActiveQueue: boolean) => {
+    if (track.source !== "youtube" || !track.videoId) return;
+    setIsLoadingUpNext(true);
+    try {
+      const params = new URLSearchParams({
+        action: "upnext",
+        videoId: track.videoId,
+        title: track.displayName,
+        artist: track.artist || ""
+      });
+      const res = await fetch(`/api/ytmusic?action=upnext&${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        const radioTracks: MusicTrack[] = Array.isArray(data.tracks) ? data.tracks.map(apiItemToTrack) : [];
+        setUpNextTracks(radioTracks);
+        if (makeActiveQueue && radioTracks.length > 0) {
+          setActiveQueue([track, ...radioTracks]);
+        }
+      }
+    } catch (_) {} finally {
+      setIsLoadingUpNext(false);
+    }
+  }, []);
+
+  // 6. Volume & Mute Sync
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.volume = isMuted ? 0 : volume;
+      audioRef.current.muted = isMuted;
+    }
+    if (ytPlayerRef.current && ytReadyRef.current) {
+      ytPlayerRef.current.setVolume(Math.round(volume * 100));
+      if (isMuted) ytPlayerRef.current.mute();
+      else ytPlayerRef.current.unMute();
     }
   }, [volume, isMuted]);
 
-  const togglePlayTrack = (track: MusicTrack) => {
-    if (currentTrack?.fileName === track.fileName) {
-      setIsPlaying((prev) => !prev);
-    } else {
+  // 7. Progress Polling for YouTube Engine
+  useEffect(() => {
+    if (!isPlaying || currentTrack?.source !== "youtube") return;
+    const interval = setInterval(() => {
+      if (isSeekingRef.current || !ytPlayerRef.current || !ytReadyRef.current) return;
+      try {
+        const curr = ytPlayerRef.current.getCurrentTime();
+        const dur = ytPlayerRef.current.getDuration();
+        if (!isNaN(curr)) setCurrentTime(curr);
+        if (!isNaN(dur) && dur > 0) setDuration(dur);
+      } catch (_) {}
+    }, 250);
+    return () => clearInterval(interval);
+  }, [isPlaying, currentTrack]);
+
+  // Core Playback Engine
+  const playTrackFromContext = useCallback(
+    (track: MusicTrack, contextQueue?: MusicTrack[], triggerRadio = false) => {
+      setStatusNotice(null);
       setCurrentTrack(track);
       setCurrentTime(0);
+      setDuration(track.duration || 0);
       setIsPlaying(true);
+
+      if (contextQueue && contextQueue.length > 0) {
+        setActiveQueue(contextQueue);
+      }
+
+      if (track.source === "youtube" && track.videoId) {
+        if (audioRef.current) audioRef.current.pause();
+        if (ytPlayerRef.current && ytReadyRef.current) {
+          ytPlayerRef.current.loadVideoById(track.videoId);
+        } else {
+          pendingYtVideoIdRef.current = track.videoId;
+        }
+        // Populate Up Next Radio in the background
+        fetchUpNextForTrack(track, triggerRadio);
+      } else if (track.source === "upload") {
+        if (ytPlayerRef.current && ytReadyRef.current) {
+          try {
+            ytPlayerRef.current.pauseVideo();
+          } catch (_) {}
+        }
+        if (audioRef.current) {
+          audioRef.current.src = track.url;
+          audioRef.current.currentTime = 0;
+          audioRef.current.play().catch(() => setIsPlaying(false));
+        }
+      }
+    },
+    [fetchUpNextForTrack]
+  );
+
+  // Silent Auto-Fallback when a YouTube upload blocks embedding (Error 101 / 150)
+  const handleYtPlaybackError = useCallback(
+    async (errorCode: number) => {
+      if (!currentTrack || currentTrack.source !== "youtube" || !currentTrack.videoId) {
+        setIsPlaying(false);
+        return;
+      }
+
+      const originalVid = currentTrack.videoId;
+      if ((errorCode === 101 || errorCode === 150) && !fallbackTriedRef.current.has(originalVid)) {
+        fallbackTriedRef.current.add(originalVid);
+        setStatusNotice({ type: "info", text: "Official audio restricted — switching to playable version..." });
+
+        try {
+          const q = `${currentTrack.displayName} ${currentTrack.artist && currentTrack.artist !== "YouTube Music" ? currentTrack.artist : ""}`.trim();
+          const res = await fetch(`/api/ytmusic?action=search&embedFallback=1&q=${encodeURIComponent(q)}`);
+          if (res.ok) {
+            const data = await res.json();
+            const alt = (data.tracks || []).find((t: any) => t.videoId && t.videoId !== originalVid);
+            if (alt && ytPlayerRef.current && ytReadyRef.current) {
+              fallbackTriedRef.current.add(alt.videoId);
+              ytPlayerRef.current.loadVideoById(alt.videoId);
+              setStatusNotice({ type: "info", text: "Playing embeddable version" });
+              setTimeout(() => setStatusNotice(null), 3000);
+              return;
+            }
+          }
+        } catch (_) {}
+      }
+
+      setStatusNotice({
+        type: "error",
+        text: "This upload blocks external playback. Try another result or tap Next."
+      });
+      setIsPlaying(false);
+    },
+    [currentTrack]
+  );
+
+  useEffect(() => {
+    handleYtErrorRef.current = handleYtPlaybackError;
+  }, [handleYtPlaybackError]);
+
+  const togglePlayPauseCurrent = () => {
+    if (!currentTrack) return;
+    if (isPlaying) {
+      setIsPlaying(false);
+      if (currentTrack.source === "youtube") ytPlayerRef.current?.pauseVideo();
+      else audioRef.current?.pause();
+    } else {
+      setStatusNotice(null);
+      setIsPlaying(true);
+      if (currentTrack.source === "youtube" && currentTrack.videoId) {
+        if (ytPlayerRef.current && ytReadyRef.current) {
+          const loadedDur = ytPlayerRef.current.getDuration?.() || 0;
+          if (loadedDur > 0) ytPlayerRef.current.playVideo();
+          else ytPlayerRef.current.loadVideoById(currentTrack.videoId);
+        } else {
+          pendingYtVideoIdRef.current = currentTrack.videoId;
+        }
+      } else if (audioRef.current) {
+        if (audioRef.current.src !== currentTrack.url) audioRef.current.src = currentTrack.url;
+        audioRef.current.play().catch(() => setIsPlaying(false));
+      }
     }
   };
 
-  const playNext = useCallback(() => {
-    if (tracks.length === 0) return;
-    const currentIndex = tracks.findIndex((t) => t.fileName === currentTrack?.fileName);
+  const getEffectiveQueue = useCallback(() => {
+    if (activeQueue.length > 0) return activeQueue;
+    if (upNextTracks.length > 0) return upNextTracks;
+    return vaultTracks;
+  }, [activeQueue, upNextTracks, vaultTracks]);
 
-    if (repeatMode === "off" && !isShuffle && currentIndex === tracks.length - 1) {
+  const playNext = useCallback(() => {
+    const queue = getEffectiveQueue();
+    if (queue.length === 0) return;
+
+    const currentIndex = queue.findIndex((t) => t.id === currentTrack?.id);
+
+    if (repeatMode === "off" && !isShuffle && currentIndex === queue.length - 1) {
       setIsPlaying(false);
       return;
     }
 
     let nextIndex = 0;
-    if (isShuffle && tracks.length > 1) {
+    if (isShuffle && queue.length > 1) {
       do {
-        nextIndex = Math.floor(Math.random() * tracks.length);
+        nextIndex = Math.floor(Math.random() * queue.length);
       } while (nextIndex === currentIndex);
     } else {
-      nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % tracks.length;
+      nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % queue.length;
     }
 
-    setCurrentTrack(tracks[nextIndex]);
-    setCurrentTime(0);
-    setIsPlaying(true);
-  }, [tracks, currentTrack, isShuffle, repeatMode]);
+    playTrackFromContext(queue[nextIndex], queue, false);
+  }, [getEffectiveQueue, currentTrack, isShuffle, repeatMode, playTrackFromContext]);
 
   const playPrev = useCallback(() => {
-    if (tracks.length === 0) return;
-    // If more than 3 seconds into a song, restart it instead of jumping back
-    if (audioRef.current && audioRef.current.currentTime > 3) {
-      audioRef.current.currentTime = 0;
+    const queue = getEffectiveQueue();
+    if (queue.length === 0) return;
+
+    if (currentTime > 3) {
       setCurrentTime(0);
+      if (currentTrack?.source === "youtube") ytPlayerRef.current?.seekTo(0, true);
+      else if (audioRef.current) audioRef.current.currentTime = 0;
       return;
     }
-    const currentIndex = tracks.findIndex((t) => t.fileName === currentTrack?.fileName);
-    const prevIndex = currentIndex === -1 ? 0 : (currentIndex - 1 + tracks.length) % tracks.length;
-    setCurrentTrack(tracks[prevIndex]);
-    setCurrentTime(0);
-    setIsPlaying(true);
-  }, [tracks, currentTrack]);
 
-  const handleTrackEnd = () => {
-    if (repeatMode === "one") {
-      if (audioRef.current) {
+    const currentIndex = queue.findIndex((t) => t.id === currentTrack?.id);
+    const prevIndex = currentIndex === -1 ? 0 : (currentIndex - 1 + queue.length) % queue.length;
+    playTrackFromContext(queue[prevIndex], queue, false);
+  }, [getEffectiveQueue, currentTrack, currentTime, playTrackFromContext]);
+
+  const handleTrackEnd = useCallback(() => {
+    if (repeatMode === "one" && currentTrack) {
+      setCurrentTime(0);
+      if (currentTrack.source === "youtube") {
+        ytPlayerRef.current?.seekTo(0, true);
+        ytPlayerRef.current?.playVideo();
+      } else if (audioRef.current) {
         audioRef.current.currentTime = 0;
         audioRef.current.play().catch(() => {});
       }
     } else {
       playNext();
     }
-  };
+  }, [repeatMode, currentTrack, playNext]);
+
+  useEffect(() => {
+    handleTrackEndRef.current = handleTrackEnd;
+  }, [handleTrackEnd]);
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newTime = parseFloat(e.target.value);
     setCurrentTime(newTime);
-    if (audioRef.current) {
+    if (currentTrack?.source === "youtube") {
+      ytPlayerRef.current?.seekTo(newTime, true);
+    } else if (audioRef.current) {
       audioRef.current.currentTime = newTime;
+    }
+  };
+
+  // Save / Unsave any YouTube song into the shared Vault playlist
+  const toggleSaveToVault = async (track: MusicTrack, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (track.source !== "youtube" || !track.videoId) return;
+    const vid = track.videoId;
+
+    setSavingVideoIds((prev) => new Set(prev).add(vid));
+    try {
+      if (savedVideoIdSet.has(vid)) {
+        await supabase.from("vault_yt_tracks").delete().eq("video_id", vid);
+      } else {
+        const { error } = await supabase.from("vault_yt_tracks").upsert(
+          {
+            video_id: vid,
+            display_name: track.displayName,
+            artist: track.artist || "YouTube Music",
+            thumbnail_url: track.thumbnail || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`
+          },
+          { onConflict: "video_id" }
+        );
+        if (error) {
+          setStatusNotice({ type: "error", text: "Run the 'vault_yt_tracks' SQL in Supabase to save songs." });
+        }
+      }
+      await fetchVaultMusic();
+    } finally {
+      setSavingVideoIds((prev) => {
+        const next = new Set(prev);
+        next.delete(vid);
+        return next;
+      });
+    }
+  };
+
+  // Import a YT Music Playlist URL or Single Song URL into the Vault
+  const handleImportLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const raw = linkInput.trim();
+    if (!raw) return;
+
+    setIsImportingLink(true);
+    setStatusNotice(null);
+
+    try {
+      const playlistId = extractPlaylistId(raw);
+      const videoId = extractYouTubeId(raw);
+
+      if (playlistId && (!videoId || raw.includes("/playlist"))) {
+        const res = await fetch(`/api/ytmusic?action=playlist&listId=${encodeURIComponent(playlistId)}`);
+        const data = await res.json();
+        const items: MusicTrack[] = Array.isArray(data.tracks) ? data.tracks.map(apiItemToTrack) : [];
+
+        if (items.length === 0) {
+          setStatusNotice({
+            type: "error",
+            text: "No songs found. Make sure the YT Music playlist is set to Unlisted or Public."
+          });
+        } else {
+          const rows = items.map((t) => ({
+            video_id: t.videoId!,
+            display_name: t.displayName,
+            artist: t.artist || "YouTube Music",
+            thumbnail_url: t.thumbnail || null
+          }));
+          const { error } = await supabase.from("vault_yt_tracks").upsert(rows, { onConflict: "video_id" });
+          if (error) {
+            setStatusNotice({ type: "error", text: "Could not save playlist to Supabase." });
+          } else {
+            setLinkInput("");
+            setStatusNotice({ type: "info", text: `Imported ${items.length} songs to Vault!` });
+            setTimeout(() => setStatusNotice(null), 3500);
+            await fetchVaultMusic();
+          }
+        }
+      } else if (videoId) {
+        let title = `YouTube Song (${videoId})`;
+        let artist = "YouTube Music";
+        try {
+          const res = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`);
+          if (res.ok) {
+            const meta = await res.json();
+            if (meta?.title) title = meta.title;
+            if (meta?.author_name) artist = meta.author_name.replace(/\s*-\s*Topic$/i, "");
+          }
+        } catch (_) {}
+
+        const { error } = await supabase.from("vault_yt_tracks").upsert(
+          {
+            video_id: videoId,
+            display_name: title,
+            artist,
+            thumbnail_url: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+          },
+          { onConflict: "video_id" }
+        );
+        if (!error) {
+          setLinkInput("");
+          await fetchVaultMusic();
+        }
+      } else {
+        setStatusNotice({ type: "error", text: "Paste a valid YT Music song or Unlisted playlist link." });
+      }
+    } finally {
+      setIsImportingLink(false);
     }
   };
 
@@ -212,66 +750,311 @@ export default function BackgroundAudio() {
     setIsUploading(true);
     const fileName = `${Date.now()}_${file.name}`;
     const { error } = await supabase.storage.from("vault_music").upload(fileName, file);
-    if (!error) {
-      await fetchMusic();
-    } else {
-      alert("Upload failed. Ensure your 'vault_music' bucket policies allow INSERT.");
-    }
+    if (!error) await fetchVaultMusic();
+    else setStatusNotice({ type: "error", text: "Upload failed. Check 'vault_music' bucket policies." });
     setIsUploading(false);
     e.target.value = "";
   };
 
   const startRenaming = (track: MusicTrack, e: React.MouseEvent) => {
     e.stopPropagation();
-    setEditingFile(track.fileName);
+    setEditingId(track.id);
     setEditNameValue(track.displayName);
   };
 
-  const saveRename = async (fileName: string) => {
+  const saveRename = async (track: MusicTrack) => {
     const trimmed = editNameValue.trim();
     if (!trimmed) {
-      setEditingFile(null);
+      setEditingId(null);
       return;
     }
     setIsSavingName(true);
 
-    const { error } = await supabase
-      .from("vault_music_meta")
-      .upsert(
-        { file_name: fileName, display_name: trimmed, updated_at: new Date().toISOString() },
-        { onConflict: "file_name" }
-      );
-
-    if (error) {
-      alert("Could not save name. Make sure you ran the SQL for 'vault_music_meta' in Supabase.");
-    } else {
-      setTracks((prev) =>
-        prev.map((t) => (t.fileName === fileName ? { ...t, displayName: trimmed } : t))
-      );
-      setCurrentTrack((prev) =>
-        prev && prev.fileName === fileName ? { ...prev, displayName: trimmed } : prev
-      );
+    let error = null;
+    if (track.source === "youtube" && track.videoId) {
+      const res = await supabase.from("vault_yt_tracks").update({ display_name: trimmed }).eq("video_id", track.videoId);
+      error = res.error;
+    } else if (track.fileName) {
+      const res = await supabase
+        .from("vault_music_meta")
+        .upsert(
+          { file_name: track.fileName, display_name: trimmed, updated_at: new Date().toISOString() },
+          { onConflict: "file_name" }
+        );
+      error = res.error;
     }
 
+    if (!error) {
+      setVaultTracks((prev) => prev.map((t) => (t.id === track.id ? { ...t, displayName: trimmed } : t)));
+      setCurrentTrack((prev) => (prev && prev.id === track.id ? { ...prev, displayName: trimmed } : prev));
+    }
     setIsSavingName(false);
-    setEditingFile(null);
+    setEditingId(null);
   };
 
   const progressPercent = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const isCurrentSaved = Boolean(currentTrack?.videoId && savedVideoIdSet.has(currentTrack.videoId));
+
+  // Reusable Full Player Controls Block (used on Desktop Left Panel & Mobile Expanded Sheet)
+  const renderFullPlayerDeck = (isMobileModal = false) => (
+    <div className="flex flex-col items-center justify-center w-full max-w-sm mx-auto">
+      {/* Album Art / Disc */}
+      <div className="relative mb-5">
+        <div
+          className={`absolute -inset-4 rounded-3xl bg-gradient-to-tr from-[#9333EA] to-[#F472B6] blur-3xl transition-opacity duration-700 ${
+            isPlaying && !isMuted ? "opacity-35" : "opacity-15"
+          }`}
+        />
+        <div
+          className={`relative ${
+            isMobileModal ? "w-56 h-56" : "w-44 h-44"
+          } rounded-3xl bg-[#111822] border border-white/15 flex items-center justify-center shadow-2xl overflow-hidden`}
+        >
+          {currentTrack?.thumbnail ? (
+            <img
+              src={currentTrack.thumbnail}
+              alt={currentTrack.displayName}
+              className={`w-full h-full object-cover transition-transform duration-700 ${isPlaying ? "scale-105" : "scale-100"}`}
+            />
+          ) : (
+            <Disc3 className={`w-20 h-20 text-[#F472B6]/80 ${isPlaying ? "animate-spin" : ""}`} style={{ animationDuration: "8s" }} />
+          )}
+        </div>
+      </div>
+
+      {/* Title, Artist & Save Heart */}
+      <div className="w-full flex items-center justify-between gap-3 mb-4 px-1">
+        <div className="min-w-0 text-left flex-1">
+          <h3 className="text-lg font-semibold text-white truncate">
+            {currentTrack ? currentTrack.displayName : "Search any song to play"}
+          </h3>
+          <p className="text-xs text-white/50 truncate mt-0.5">
+            {currentTrack ? currentTrack.artist || "YouTube Music" : "Vault Music Player"}
+          </p>
+        </div>
+
+        {currentTrack?.source === "youtube" && (
+          <button
+            onClick={(e) => toggleSaveToVault(currentTrack, e)}
+            title={isCurrentSaved ? "Remove from Vault" : "Save to Shared Vault"}
+            className={`p-2.5 rounded-full border transition-all flex-shrink-0 ${
+              isCurrentSaved
+                ? "bg-[#F472B6]/15 border-[#F472B6]/40 text-[#F472B6]"
+                : "bg-white/[0.05] border-white/10 text-white/55 hover:text-white"
+            }`}
+          >
+            <Heart className={`w-4 h-4 ${isCurrentSaved ? "fill-[#F472B6]" : ""}`} />
+          </button>
+        )}
+      </div>
+
+      {/* Status / Error Banner */}
+      <AnimatePresence>
+        {statusNotice && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className={`w-full mb-3 text-[11px] px-3 py-2 rounded-xl flex items-start gap-2 border ${
+              statusNotice.type === "error"
+                ? "bg-red-500/10 border-red-500/30 text-red-300"
+                : "bg-[#F472B6]/10 border-[#F472B6]/30 text-pink-200"
+            }`}
+          >
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span className="flex-1 text-left">{statusNotice.text}</span>
+            <button onClick={() => setStatusNotice(null)}><X className="w-3.5 h-3.5" /></button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Interactive Timestamp Scrubber */}
+      <div className="w-full space-y-1.5 mb-5">
+        <div className="relative w-full h-5 flex items-center">
+          <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-[#9333EA] to-[#F472B6] rounded-full"
+              style={{ width: `${progressPercent}%` }}
+            />
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={duration || 0}
+            step={0.5}
+            value={currentTime}
+            onMouseDown={() => { isSeekingRef.current = true; }}
+            onMouseUp={() => { isSeekingRef.current = false; }}
+            onTouchStart={() => { isSeekingRef.current = true; }}
+            onTouchEnd={() => { isSeekingRef.current = false; }}
+            onChange={handleSeek}
+            disabled={!currentTrack}
+            aria-label="Seek track"
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+          />
+          <div
+            className="pointer-events-none absolute w-3.5 h-3.5 bg-white rounded-full shadow-[0_0_10px_rgba(244,114,182,0.9)] -translate-x-1/2"
+            style={{ left: `${progressPercent}%` }}
+          />
+        </div>
+        <div className="flex justify-between text-[11px] font-mono text-white/45">
+          <span>{formatDuration(currentTime)}</span>
+          <span>{formatDuration(duration)}</span>
+        </div>
+      </div>
+
+      {/* Main Transport Controls */}
+      <div className="w-full flex items-center justify-between px-2">
+        <button
+          onClick={() => setIsShuffle(!isShuffle)}
+          title="Shuffle"
+          className={`p-2 rounded-full transition-colors ${isShuffle ? "text-[#F472B6] bg-[#F472B6]/10" : "text-white/45 hover:text-white"}`}
+        >
+          <Shuffle className="w-4 h-4" />
+        </button>
+
+        <button onClick={playPrev} title="Previous" className="p-2.5 text-white/80 hover:text-white active:scale-90 transition-transform">
+          <SkipBack className="w-6 h-6" />
+        </button>
+
+        <button
+          onClick={togglePlayPauseCurrent}
+          disabled={!currentTrack}
+          className="w-14 h-14 rounded-full bg-gradient-to-tr from-[#9333EA] to-[#F472B6] text-white flex items-center justify-center shadow-[0_0_30px_rgba(244,114,182,0.45)] hover:scale-105 active:scale-95 transition-transform disabled:opacity-40"
+        >
+          {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-0.5" />}
+        </button>
+
+        <button onClick={playNext} title="Next" className="p-2.5 text-white/80 hover:text-white active:scale-90 transition-transform">
+          <SkipForward className="w-6 h-6" />
+        </button>
+
+        <button
+          onClick={() => setRepeatMode((p) => (p === "all" ? "one" : p === "one" ? "off" : "all"))}
+          title={`Repeat: ${repeatMode}`}
+          className={`p-2 rounded-full transition-colors ${repeatMode !== "off" ? "text-[#F472B6] bg-[#F472B6]/10" : "text-white/45 hover:text-white"}`}
+        >
+          {repeatMode === "one" ? <Repeat1 className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
+        </button>
+      </div>
+
+      {/* Volume Row */}
+      <div className="w-full max-w-[230px] flex items-center gap-3 mt-5">
+        <button
+          onClick={() => setIsMuted(!isMuted)}
+          className="text-white/60 hover:text-white transition-colors"
+          title={isMuted ? "Unmute" : "Mute"}
+        >
+          {isMuted || volume === 0 ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4" />}
+        </button>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.02}
+          value={isMuted ? 0 : volume}
+          onChange={(e) => {
+            setVolume(parseFloat(e.target.value));
+            if (isMuted) setIsMuted(false);
+          }}
+          className="w-full h-1 accent-[#F472B6] bg-white/10 rounded-full cursor-pointer"
+        />
+      </div>
+    </div>
+  );
+
+  // Reusable Track Row for Search / Discover / Up Next
+  const renderStreamTrackRow = (track: MusicTrack, contextList: MusicTrack[], triggerRadio: boolean) => {
+    const isCurrent = currentTrack?.id === track.id;
+    const isSaved = Boolean(track.videoId && savedVideoIdSet.has(track.videoId));
+    const isSaving = Boolean(track.videoId && savingVideoIds.has(track.videoId));
+
+    return (
+      <div
+        key={`${track.id}-${triggerRadio ? "r" : "q"}`}
+        onClick={() => {
+          if (isCurrent) togglePlayPauseCurrent();
+          else playTrackFromContext(track, contextList, triggerRadio);
+        }}
+        className={`group flex items-center justify-between gap-3 px-3 py-2.5 rounded-2xl border transition-all cursor-pointer ${
+          isCurrent
+            ? "bg-gradient-to-r from-[#9333EA]/20 to-[#F472B6]/15 border-[#F472B6]/40 shadow-lg"
+            : "bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]"
+        }`}
+      >
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="relative w-11 h-11 rounded-xl overflow-hidden flex-shrink-0 bg-white/[0.06]">
+            {track.thumbnail && <img src={track.thumbnail} alt="" className="w-full h-full object-cover" />}
+            <div className={`absolute inset-0 flex items-center justify-center ${isCurrent ? "bg-black/45" : "bg-black/20 group-hover:bg-black/45"}`}>
+              {isCurrent && isPlaying ? (
+                <Pause className="w-4 h-4 text-[#F472B6]" />
+              ) : (
+                <Play className="w-4 h-4 text-white ml-0.5" />
+              )}
+            </div>
+          </div>
+
+          <div className="min-w-0 flex-1 text-left">
+            <p className={`text-sm truncate ${isCurrent ? "text-white font-semibold" : "text-white/90"}`}>
+              {track.displayName}
+            </p>
+            <p className="text-[11px] text-white/45 truncate mt-0.5">
+              {track.artist || "YouTube Music"}
+              {track.duration ? ` • ${formatDuration(track.duration)}` : ""}
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={(e) => toggleSaveToVault(track, e)}
+          disabled={isSaving}
+          title={isSaved ? "Saved in Vault" : "Save to Shared Vault"}
+          className={`p-2 rounded-xl transition-colors flex-shrink-0 ${
+            isSaved
+              ? "text-[#F472B6] bg-[#F472B6]/10"
+              : "text-white/40 hover:text-white hover:bg-white/[0.08]"
+          }`}
+        >
+          {isSaving ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Heart className={`w-4 h-4 ${isSaved ? "fill-[#F472B6]" : ""}`} />
+          )}
+        </button>
+      </div>
+    );
+  };
 
   return (
     <>
-      {/* Persistent Global Audio Element */}
+      {/* Persistent HTML5 Audio Engine (Uploaded MP3s) */}
       <audio
         ref={audioRef}
-        src={currentTrack?.url}
         muted={isMuted}
-        onTimeUpdate={() => setCurrentTime(audioRef.current?.currentTime || 0)}
-        onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
-        onEnded={handleTrackEnd}
+        onTimeUpdate={() => {
+          if (currentTrack?.source === "upload" && !isSeekingRef.current) {
+            setCurrentTime(audioRef.current?.currentTime || 0);
+          }
+        }}
+        onLoadedMetadata={() => {
+          if (currentTrack?.source === "upload") {
+            setDuration(audioRef.current?.duration || 0);
+          }
+        }}
+        onEnded={() => {
+          if (currentTrack?.source === "upload") handleTrackEnd();
+        }}
       />
 
-      {/* Compact Top-Center Trigger Pill (Never overlaps chat header name or icons) */}
+      {/* Persistent Offscreen YouTube IFrame Engine */}
+      <div
+        aria-hidden="true"
+        className="fixed -left-[9999px] -top-[9999px] w-[200px] h-[200px] opacity-0 pointer-events-none overflow-hidden"
+      >
+        <div ref={ytContainerRef} />
+      </div>
+
+      {/* Compact Top-Center Trigger Pill */}
       <div className="fixed top-2.5 left-1/2 -translate-x-1/2 z-[999990]">
         <motion.button
           initial={{ opacity: 0, y: -12 }}
@@ -295,265 +1078,453 @@ export default function BackgroundAudio() {
         </motion.button>
       </div>
 
-      {/* FULL-SCREEN DEDICATED MUSIC LIBRARY PAGE */}
+      {/* FULL-SCREEN VAULT MUSIC APP */}
       <AnimatePresence>
         {isLibraryOpen && (
           <motion.div
-            initial={{ opacity: 0, y: 24 }}
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 24 }}
-            transition={{ duration: 0.25, ease: "easeOut" }}
+            exit={{ opacity: 0, y: 20 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
             className="fixed inset-0 z-[9999999] bg-[#070a0f] text-white flex flex-col w-screen h-[100dvh] overflow-hidden"
           >
-            {/* Ambient Gradient Glow */}
-            <div className="pointer-events-none absolute -top-32 left-1/2 -translate-x-1/2 w-[500px] h-[350px] bg-gradient-to-b from-[#9333EA]/25 via-[#F472B6]/10 to-transparent blur-3xl" />
+            <div className="pointer-events-none absolute -top-32 left-1/2 -translate-x-1/2 w-[500px] h-[350px] bg-gradient-to-b from-[#9333EA]/20 via-[#F472B6]/10 to-transparent blur-3xl" />
 
-            {/* Page Top Bar */}
-            <div className="relative z-10 flex items-center justify-between px-4 sm:px-6 py-4 border-b border-white/[0.07] bg-[#0b1017]/80 backdrop-blur-xl flex-shrink-0">
+            {/* Top Header */}
+            <div className="relative z-10 flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-white/[0.07] bg-[#0b1017]/85 backdrop-blur-xl flex-shrink-0">
               <button
                 onClick={() => setIsLibraryOpen(false)}
-                className="flex items-center gap-2 text-white/75 hover:text-white bg-white/[0.05] hover:bg-white/[0.1] px-3 py-2 rounded-full text-xs font-medium transition-colors"
+                className="flex items-center gap-1.5 text-white/75 hover:text-white bg-white/[0.05] hover:bg-white/[0.1] px-3 py-2 rounded-full text-xs font-medium transition-colors"
               >
                 <ArrowLeft className="w-4 h-4" /> Back
               </button>
 
               <div className="text-center">
                 <h2 className="text-sm font-semibold tracking-wider uppercase text-white">Vault Music</h2>
-                <p className="text-[10px] text-white/40 font-mono">
-                  {tracks.length} {tracks.length === 1 ? "Track" : "Tracks"} Synced
-                </p>
+                <p className="text-[10px] text-white/40 font-mono">YouTube Music + Shared Vault</p>
               </div>
 
-              <label className="flex items-center gap-1.5 bg-gradient-to-r from-[#9333EA] to-[#F472B6] hover:opacity-90 text-white text-xs font-semibold px-3.5 py-2 rounded-full cursor-pointer shadow-lg shadow-pink-500/20 transition-all">
-                {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                <span>{isUploading ? "Adding..." : "Add Song"}</span>
+              <label className="flex items-center gap-1.5 bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-white text-xs font-medium px-3 py-2 rounded-full cursor-pointer transition-all">
+                {isUploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5 text-[#F472B6]" />}
+                <span>{isUploading ? "..." : "MP3"}</span>
                 <input type="file" accept="audio/*" onChange={handleUpload} className="hidden" />
               </label>
             </div>
 
-            {/* Responsive Two-Column (PC) / Stacked (Android) Body */}
+            {/* Body Split (Desktop side-by-side / Mobile full browse + bottom mini player) */}
             <div className="relative z-10 flex-1 min-h-0 flex flex-col lg:flex-row max-w-6xl w-full mx-auto overflow-hidden">
               
-              {/* NOW PLAYING DECK */}
-              <div className="w-full lg:w-[42%] p-5 sm:p-8 flex flex-col items-center justify-center border-b lg:border-b-0 lg:border-r border-white/[0.06] flex-shrink-0 bg-gradient-to-b from-white/[0.02] to-transparent">
-                {/* Spinning Disc Art */}
-                <div className="relative mb-5">
-                  <div className={`absolute -inset-3 rounded-full bg-gradient-to-tr from-[#9333EA] to-[#F472B6] blur-2xl transition-opacity duration-700 ${isPlaying && !isMuted ? "opacity-40" : "opacity-15"}`} />
-                  <motion.div
-                    animate={isPlaying && !isMuted ? { rotate: 360 } : { rotate: 0 }}
-                    transition={isPlaying && !isMuted ? { duration: 10, repeat: Infinity, ease: "linear" } : { duration: 0.4 }}
-                    className="relative w-28 h-28 sm:w-44 sm:h-44 rounded-full bg-[#111822] border border-white/15 flex items-center justify-center shadow-2xl"
-                  >
-                    <Disc3 className="w-14 h-14 sm:w-20 sm:h-20 text-[#F472B6]/80" />
-                    <div className="absolute w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-[#070a0f] border border-white/20" />
-                  </motion.div>
-                </div>
-
-                {/* Track Title */}
-                <h3 className="text-base sm:text-xl font-semibold text-white text-center line-clamp-1 max-w-full px-2">
-                  {currentTrack ? currentTrack.displayName : "No Track Selected"}
-                </h3>
-                <p className="text-[11px] text-white/40 font-mono mt-1 mb-5">
-                  {isPlaying ? (isMuted ? "Muted" : "Now Playing") : "Paused"}
-                </p>
-
-                {/* INTERACTIVE SEEK / TIMESTAMP SCRUBBER */}
-                <div className="w-full max-w-sm space-y-1.5 mb-5">
-                  <div className="relative w-full h-5 flex items-center">
-                    <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-[#9333EA] to-[#F472B6] rounded-full"
-                        style={{ width: `${progressPercent}%` }}
-                      />
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={duration || 0}
-                      step={0.1}
-                      value={currentTime}
-                      onChange={handleSeek}
-                      disabled={!currentTrack}
-                      aria-label="Seek audio position"
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
-                    />
-                    <div
-                      className="pointer-events-none absolute w-3.5 h-3.5 bg-white rounded-full shadow-[0_0_10px_rgba(244,114,182,0.9)] -translate-x-1/2"
-                      style={{ left: `${progressPercent}%` }}
-                    />
-                  </div>
-                  <div className="flex justify-between text-[11px] font-mono text-white/45">
-                    <span>{formatDuration(currentTime)}</span>
-                    <span>{formatDuration(duration)}</span>
-                  </div>
-                </div>
-
-                {/* Main Controls */}
-                <div className="w-full max-w-sm flex items-center justify-between px-2">
-                  <button
-                    onClick={() => setIsShuffle(!isShuffle)}
-                    title="Shuffle"
-                    className={`p-2 rounded-full transition-colors ${isShuffle ? "text-[#F472B6] bg-[#F472B6]/10" : "text-white/45 hover:text-white"}`}
-                  >
-                    <Shuffle className="w-4 h-4" />
-                  </button>
-
-                  <button onClick={playPrev} title="Previous" className="p-2.5 text-white/80 hover:text-white active:scale-90 transition-transform">
-                    <SkipBack className="w-6 h-6" />
-                  </button>
-
-                  <button
-                    onClick={() => currentTrack && togglePlayTrack(currentTrack)}
-                    disabled={!currentTrack}
-                    className="w-14 h-14 rounded-full bg-gradient-to-tr from-[#9333EA] to-[#F472B6] text-white flex items-center justify-center shadow-[0_0_30px_rgba(244,114,182,0.45)] hover:scale-105 active:scale-95 transition-transform disabled:opacity-40"
-                  >
-                    {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-0.5" />}
-                  </button>
-
-                  <button onClick={playNext} title="Next" className="p-2.5 text-white/80 hover:text-white active:scale-90 transition-transform">
-                    <SkipForward className="w-6 h-6" />
-                  </button>
-
-                  <button
-                    onClick={() => setRepeatMode((p) => (p === "all" ? "one" : p === "one" ? "off" : "all"))}
-                    title={`Repeat: ${repeatMode}`}
-                    className={`p-2 rounded-full transition-colors ${repeatMode !== "off" ? "text-[#F472B6] bg-[#F472B6]/10" : "text-white/45 hover:text-white"}`}
-                  >
-                    {repeatMode === "one" ? <Repeat1 className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
-                  </button>
-                </div>
-
-                {/* Volume & Mute Row */}
-                <div className="w-full max-w-[220px] flex items-center gap-3 mt-5">
-                  <button
-                    onClick={() => setIsMuted(!isMuted)}
-                    className="text-white/60 hover:text-white transition-colors"
-                    title={isMuted ? "Unmute" : "Mute"}
-                  >
-                    {isMuted || volume === 0 ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4" />}
-                  </button>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.02}
-                    value={isMuted ? 0 : volume}
-                    onChange={(e) => {
-                      setVolume(parseFloat(e.target.value));
-                      if (isMuted) setIsMuted(false);
-                    }}
-                    className="w-full h-1 accent-[#F472B6] bg-white/10 rounded-full cursor-pointer"
-                  />
-                </div>
+              {/* DESKTOP LEFT PANEL: Always-visible Now Playing Deck */}
+              <div className="hidden lg:flex w-[40%] p-8 flex-col items-center justify-center border-r border-white/[0.06] flex-shrink-0 bg-gradient-to-b from-white/[0.02] to-transparent">
+                {renderFullPlayerDeck(false)}
               </div>
 
-              {/* SHARED PLAYLIST & RENAME LIST */}
-              <div className="flex-1 min-h-0 flex flex-col p-4 sm:p-6">
-                <div className="flex items-center justify-between mb-3 px-1">
-                  <span className="text-xs font-mono uppercase tracking-widest text-white/45">
-                    Shared Playlist
-                  </span>
-                  <span className="text-[11px] text-white/35">
-                    Tap pencil to rename for both
-                  </span>
+              {/* MAIN CONTENT AREA: 4-Tab Browser */}
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                
+                {/* Navigation Tabs */}
+                <div className="grid grid-cols-4 gap-1 px-3 sm:px-6 pt-3 pb-2 border-b border-white/[0.06] flex-shrink-0">
+                  {[
+                    { id: "search" as ActiveTab, label: "Search", icon: Search },
+                    { id: "discover" as ActiveTab, label: "Discover", icon: Compass },
+                    { id: "upnext" as ActiveTab, label: "Up Next", icon: Radio },
+                    { id: "vault" as ActiveTab, label: `Vault (${vaultTracks.length})`, icon: ListMusic }
+                  ].map((tab) => {
+                    const Icon = tab.icon;
+                    const active = activeTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id)}
+                        className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-medium transition-all ${
+                          active
+                            ? "bg-gradient-to-r from-[#9333EA]/25 to-[#F472B6]/20 text-white border border-[#F472B6]/35"
+                            : "text-white/50 hover:text-white/85 hover:bg-white/[0.04] border border-transparent"
+                        }`}
+                      >
+                        <Icon className={`w-3.5 h-3.5 ${active ? "text-[#F472B6]" : ""}`} />
+                        <span className="truncate">{tab.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
 
-                <div className="flex-1 overflow-y-auto space-y-2 pr-1 pb-6">
-                  {tracks.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-center py-12 text-white/40 space-y-3">
-                      <Music className="w-10 h-10 opacity-30" />
-                      <p className="text-sm">No songs in the vault yet.</p>
-                      <p className="text-xs text-white/30">Tap “Add Song” above to upload an audio track.</p>
-                    </div>
-                  ) : (
-                    tracks.map((track, idx) => {
-                      const isCurrent = currentTrack?.fileName === track.fileName;
-                      const isEditing = editingFile === track.fileName;
+                {/* TAB 1: SEARCH ALL OF YOUTUBE MUSIC */}
+                {activeTab === "search" && (
+                  <div className="flex-1 min-h-0 flex flex-col p-4 sm:p-5">
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        runSearch(searchQuery);
+                      }}
+                      className="flex items-center gap-2 mb-4 flex-shrink-0"
+                    >
+                      <div className="flex-1 flex items-center gap-2.5 bg-white/[0.06] border border-white/10 focus-within:border-[#F472B6]/60 rounded-2xl px-4 py-3 transition-colors">
+                        <Search className="w-4 h-4 text-[#F472B6] flex-shrink-0" />
+                        <input
+                          type="text"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          placeholder="Search any song, artist, or album on YT Music..."
+                          className="flex-1 min-w-0 bg-transparent text-sm text-white focus:outline-none placeholder:text-white/35"
+                        />
+                        {searchQuery && (
+                          <button type="button" onClick={() => setSearchQuery("")} className="text-white/40 hover:text-white">
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </form>
 
-                      return (
-                        <div
-                          key={track.fileName}
-                          onClick={() => !isEditing && togglePlayTrack(track)}
-                          className={`group flex items-center justify-between gap-3 px-3.5 py-3 rounded-2xl border transition-all cursor-pointer ${
-                            isCurrent
-                              ? "bg-gradient-to-r from-[#9333EA]/20 to-[#F472B6]/15 border-[#F472B6]/40 shadow-lg"
-                              : "bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]"
-                          }`}
+                    <div className="flex-1 overflow-y-auto space-y-2 pr-1 pb-4">
+                      {isSearching ? (
+                        <div className="flex flex-col items-center justify-center py-16 gap-3 text-white/45">
+                          <Loader2 className="w-6 h-6 text-[#F472B6] animate-spin" />
+                          <span className="text-xs font-mono">Searching YouTube Music...</span>
+                        </div>
+                      ) : searchResults.length > 0 ? (
+                        searchResults.map((track) => renderStreamTrackRow(track, searchResults, true))
+                      ) : searchQuery.trim() ? (
+                        <p className="text-center text-xs text-white/40 py-14">No songs found for “{searchQuery}”.</p>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center text-center py-14 space-y-4">
+                          <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center">
+                            <Search className="w-6 h-6 text-[#F472B6]/80" />
+                          </div>
+                          <div>
+                            <p className="text-sm text-white/85 font-medium">Play anything from YouTube Music</p>
+                            <p className="text-xs text-white/40 mt-1 max-w-xs">
+                              Search any song and tap to play. Related recommendations will queue automatically in Up Next.
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap justify-center gap-2 pt-1 max-w-sm">
+                            {["Arijit Singh", "The Weeknd", "Pritam", "Lana Del Rey", "Anuv Jain", "Bollywood Romance"].map((chip) => (
+                              <button
+                                key={chip}
+                                onClick={() => setSearchQuery(chip)}
+                                className="text-[11px] bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-white/75 px-3 py-1.5 rounded-full transition-colors"
+                              >
+                                {chip}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: DISCOVER / RECOMMENDATIONS */}
+                {activeTab === "discover" && (
+                  <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-6 pb-6">
+                    {isLoadingHome ? (
+                      <div className="flex flex-col items-center justify-center py-20 gap-3 text-white/45">
+                        <Loader2 className="w-6 h-6 text-[#F472B6] animate-spin" />
+                        <span className="text-xs font-mono">Loading recommendations...</span>
+                      </div>
+                    ) : homeShelves.length === 0 ? (
+                      <div className="text-center py-16 text-white/45 space-y-2">
+                        <Compass className="w-8 h-8 mx-auto opacity-40" />
+                        <p className="text-sm">Could not load recommendations right now.</p>
+                        <button
+                          onClick={() => {
+                            setHomeShelves([]);
+                            setActiveTab("search");
+                          }}
+                          className="text-xs text-[#F472B6] underline"
                         >
-                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                          Use Search instead
+                        </button>
+                      </div>
+                    ) : (
+                      homeShelves.map((shelf) => (
+                        <div key={shelf.title} className="space-y-2.5">
+                          <h3 className="text-xs font-mono uppercase tracking-widest text-white/55 px-1">
+                            {shelf.title}
+                          </h3>
+                          <div className="space-y-2">
+                            {shelf.items.map((track) => renderStreamTrackRow(track, shelf.items, true))}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* TAB 3: UP NEXT / LIVE RADIO QUEUE */}
+                {activeTab === "upnext" && (
+                  <div className="flex-1 min-h-0 flex flex-col p-4 sm:p-5">
+                    <div className="flex items-center justify-between mb-3 px-1 flex-shrink-0">
+                      <span className="text-xs font-mono uppercase tracking-widest text-white/50">
+                        Auto-Recommended Radio
+                      </span>
+                      {currentTrack && (
+                        <span className="text-[11px] text-[#F472B6] truncate max-w-[180px]">
+                          Based on {currentTrack.displayName}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-2 pr-1 pb-4">
+                      {isLoadingUpNext ? (
+                        <div className="flex flex-col items-center justify-center py-16 gap-3 text-white/45">
+                          <Loader2 className="w-6 h-6 text-[#F472B6] animate-spin" />
+                          <span className="text-xs font-mono">Building Up Next queue...</span>
+                        </div>
+                      ) : upNextTracks.length === 0 ? (
+                        <div className="text-center py-16 text-white/40 space-y-2">
+                          <Radio className="w-9 h-9 mx-auto opacity-30" />
+                          <p className="text-sm">Play any YouTube Music song first</p>
+                          <p className="text-xs text-white/30">
+                            Related songs will appear here automatically and play next.
+                          </p>
+                        </div>
+                      ) : (
+                        upNextTracks.map((track) => renderStreamTrackRow(track, [currentTrack!, ...upNextTracks].filter(Boolean), false))
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 4: SHARED VAULT PLAYLIST + IMPORT YT PLAYLIST */}
+                {activeTab === "vault" && (
+                  <div className="flex-1 min-h-0 flex flex-col p-4 sm:p-5">
+                    <form onSubmit={handleImportLink} className="flex items-center gap-2 mb-3.5 flex-shrink-0">
+                      <div className="flex-1 flex items-center gap-2 bg-white/[0.05] border border-white/10 focus-within:border-[#F472B6]/60 rounded-2xl px-3.5 py-2.5 transition-colors">
+                        <Link2 className="w-4 h-4 text-[#F472B6] flex-shrink-0" />
+                        <input
+                          type="text"
+                          value={linkInput}
+                          onChange={(e) => setLinkInput(e.target.value)}
+                          placeholder="Paste YT Music playlist (Unlisted/Public) or song link..."
+                          className="flex-1 min-w-0 bg-transparent text-xs sm:text-sm text-white focus:outline-none placeholder:text-white/35"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={isImportingLink || !linkInput.trim()}
+                        className="bg-gradient-to-r from-[#9333EA] to-[#F472B6] hover:opacity-90 disabled:opacity-40 text-white text-xs font-semibold px-3.5 py-2.5 rounded-2xl flex items-center gap-1.5 shadow-lg shadow-pink-500/20 flex-shrink-0"
+                      >
+                        {isImportingLink ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                        <span>Import</span>
+                      </button>
+                    </form>
+
+                    <div className="flex items-center justify-between mb-2 px-1 flex-shrink-0">
+                      <span className="text-xs font-mono uppercase tracking-widest text-white/45">
+                        Saved For Both Of You
+                      </span>
+                      <span className="text-[11px] text-white/35">Tap pencil to rename</span>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-2 pr-1 pb-4">
+                      {vaultTracks.length === 0 ? (
+                        <div className="text-center py-14 text-white/40 space-y-2">
+                          <Music className="w-9 h-9 mx-auto opacity-30" />
+                          <p className="text-sm">Your shared Vault playlist is empty.</p>
+                          <p className="text-xs text-white/30">
+                            Tap the heart on any song in Search/Discover, or import your YT Music playlist above.
+                          </p>
+                        </div>
+                      ) : (
+                        vaultTracks.map((track, idx) => {
+                          const isCurrent = currentTrack?.id === track.id;
+                          const isEditing = editingId === track.id;
+
+                          return (
                             <div
-                              className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                                isCurrent ? "bg-[#F472B6] text-black" : "bg-white/[0.06] text-white/60"
+                              key={track.id}
+                              onClick={() => {
+                                if (isEditing) return;
+                                if (isCurrent) togglePlayPauseCurrent();
+                                else playTrackFromContext(track, vaultTracks, false);
+                              }}
+                              className={`group flex items-center justify-between gap-3 px-3 py-2.5 rounded-2xl border transition-all cursor-pointer ${
+                                isCurrent
+                                  ? "bg-gradient-to-r from-[#9333EA]/20 to-[#F472B6]/15 border-[#F472B6]/40 shadow-lg"
+                                  : "bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]"
                               }`}
                             >
-                              {isCurrent && isPlaying ? (
-                                <Pause className="w-4 h-4" />
-                              ) : isCurrent ? (
-                                <Play className="w-4 h-4 ml-0.5" />
-                              ) : (
-                                <span className="text-xs font-mono">{idx + 1}</span>
+                              <div className="flex items-center gap-3 min-w-0 flex-1">
+                                <div className="relative w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center flex-shrink-0 bg-white/[0.06]">
+                                  {track.thumbnail ? (
+                                    <>
+                                      <img src={track.thumbnail} alt="" className="w-full h-full object-cover" />
+                                      <div className={`absolute inset-0 flex items-center justify-center ${isCurrent ? "bg-black/45" : "bg-black/25 group-hover:bg-black/45"}`}>
+                                        {isCurrent && isPlaying ? <Pause className="w-4 h-4 text-[#F472B6]" /> : <Play className="w-4 h-4 text-white ml-0.5" />}
+                                      </div>
+                                    </>
+                                  ) : isCurrent && isPlaying ? (
+                                    <Pause className="w-4 h-4 text-[#F472B6]" />
+                                  ) : isCurrent ? (
+                                    <Play className="w-4 h-4 text-[#F472B6] ml-0.5" />
+                                  ) : (
+                                    <span className="text-xs font-mono text-white/55">{idx + 1}</span>
+                                  )}
+                                </div>
+
+                                {isEditing ? (
+                                  <form
+                                    onSubmit={(e) => {
+                                      e.preventDefault();
+                                      saveRename(track);
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="flex items-center gap-1.5 flex-1 min-w-0"
+                                  >
+                                    <input
+                                      type="text"
+                                      value={editNameValue}
+                                      onChange={(e) => setEditNameValue(e.target.value)}
+                                      autoFocus
+                                      className="flex-1 min-w-0 bg-black/50 border border-[#F472B6]/60 text-white text-sm rounded-lg px-2.5 py-1.5 focus:outline-none"
+                                    />
+                                    <button
+                                      type="submit"
+                                      disabled={isSavingName}
+                                      className="p-1.5 rounded-lg bg-[#00A884] text-black hover:bg-[#00c298] disabled:opacity-50"
+                                    >
+                                      {isSavingName ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingId(null)}
+                                      className="p-1.5 rounded-lg bg-white/10 text-white/70 hover:text-white"
+                                    >
+                                      <X className="w-4 h-4" />
+                                    </button>
+                                  </form>
+                                ) : (
+                                  <div className="min-w-0 flex-1 text-left">
+                                    <p className={`text-sm truncate ${isCurrent ? "text-white font-semibold" : "text-white/85"}`}>
+                                      {track.displayName}
+                                    </p>
+                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                      <span className={`text-[9px] font-mono uppercase px-1.5 py-[1px] rounded ${track.source === "youtube" ? "bg-red-500/15 text-red-300" : "bg-purple-500/15 text-purple-300"}`}>
+                                        {track.source === "youtube" ? "YT" : "MP3"}
+                                      </span>
+                                      <span className="text-[11px] text-white/40 truncate">
+                                        {track.artist || "Vault Track"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {!isEditing && (
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                  <button
+                                    onClick={(e) => startRenaming(track, e)}
+                                    title="Rename song for both"
+                                    className="p-2 rounded-xl text-white/40 hover:text-[#F472B6] hover:bg-white/[0.07] transition-colors"
+                                  >
+                                    <Pencil className="w-4 h-4" />
+                                  </button>
+                                  {track.source === "youtube" && (
+                                    <button
+                                      onClick={(e) => toggleSaveToVault(track, e)}
+                                      title="Remove from Vault"
+                                      className="p-2 rounded-xl text-white/35 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                </div>
                               )}
                             </div>
-
-                            {isEditing ? (
-                              <form
-                                onSubmit={(e) => {
-                                  e.preventDefault();
-                                  saveRename(track.fileName);
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                                className="flex items-center gap-1.5 flex-1 min-w-0"
-                              >
-                                <input
-                                  type="text"
-                                  value={editNameValue}
-                                  onChange={(e) => setEditNameValue(e.target.value)}
-                                  autoFocus
-                                  className="flex-1 min-w-0 bg-black/50 border border-[#F472B6]/60 text-white text-sm rounded-lg px-2.5 py-1.5 focus:outline-none"
-                                />
-                                <button
-                                  type="submit"
-                                  disabled={isSavingName}
-                                  className="p-1.5 rounded-lg bg-[#00A884] text-black hover:bg-[#00c298] disabled:opacity-50"
-                                >
-                                  {isSavingName ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingFile(null)}
-                                  className="p-1.5 rounded-lg bg-white/10 text-white/70 hover:text-white"
-                                >
-                                  <X className="w-4 h-4" />
-                                </button>
-                              </form>
-                            ) : (
-                              <div className="min-w-0 flex-1">
-                                <p className={`text-sm truncate ${isCurrent ? "text-white font-semibold" : "text-white/85"}`}>
-                                  {track.displayName}
-                                </p>
-                                <p className="text-[10px] text-white/35 font-mono truncate">
-                                  {isCurrent && isPlaying ? "Playing now" : "Tap to play"}
-                                </p>
-                              </div>
-                            )}
-                          </div>
-
-                          {!isEditing && (
-                            <button
-                              onClick={(e) => startRenaming(track, e)}
-                              title="Rename song for both"
-                              className="p-2 rounded-xl text-white/40 hover:text-[#F472B6] hover:bg-white/[0.07] transition-colors flex-shrink-0"
-                            >
-                              <Pencil className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* MOBILE BOTTOM MINI-PLAYER BAR (Tap to expand full controls) */}
+            {currentTrack && (
+              <div
+                onClick={() => setMobilePlayerExpanded(true)}
+                className="lg:hidden relative z-20 bg-[#101720]/95 backdrop-blur-2xl border-t border-white/10 px-3.5 py-2.5 flex-shrink-0 cursor-pointer pb-[max(10px,env(safe-area-inset-bottom))]"
+              >
+                {/* Thin live progress bar along the top edge */}
+                <div className="absolute top-0 left-0 right-0 h-[2px] bg-white/10">
+                  <div
+                    className="h-full bg-gradient-to-r from-[#9333EA] to-[#F472B6]"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="w-10 h-10 rounded-xl overflow-hidden bg-white/10 flex-shrink-0 flex items-center justify-center">
+                      {currentTrack.thumbnail ? (
+                        <img src={currentTrack.thumbnail} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <Disc3 className="w-5 h-5 text-[#F472B6]" />
+                      )}
+                    </div>
+                    <div className="min-w-0 text-left">
+                      <p className="text-xs font-semibold text-white truncate">{currentTrack.displayName}</p>
+                      <p className="text-[10px] text-white/45 truncate">
+                        {statusNotice?.text || currentTrack.artist || "Tap for controls"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={togglePlayPauseCurrent}
+                      className="w-9 h-9 rounded-full bg-gradient-to-tr from-[#9333EA] to-[#F472B6] text-white flex items-center justify-center shadow-lg"
+                    >
+                      {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                    </button>
+                    <button onClick={playNext} className="p-2 text-white/75 hover:text-white">
+                      <SkipForward className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* MOBILE EXPANDED FULL-SCREEN PLAYER OVERLAY */}
+            <AnimatePresence>
+              {mobilePlayerExpanded && (
+                <motion.div
+                  initial={{ y: "100%" }}
+                  animate={{ y: 0 }}
+                  exit={{ y: "100%" }}
+                  transition={{ type: "spring", damping: 28, stiffness: 300 }}
+                  className="lg:hidden fixed inset-0 z-50 bg-[#070a0f] flex flex-col p-6"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <button
+                      onClick={() => setMobilePlayerExpanded(false)}
+                      className="p-2 rounded-full bg-white/[0.06] text-white/80 hover:text-white"
+                    >
+                      <ChevronDown className="w-5 h-5" />
+                    </button>
+                    <span className="text-[11px] font-mono uppercase tracking-widest text-white/45">
+                      Now Playing
+                    </span>
+                    <button
+                      onClick={() => {
+                        setMobilePlayerExpanded(false);
+                        setActiveTab("upnext");
+                      }}
+                      className="p-2 rounded-full bg-white/[0.06] text-white/80 hover:text-[#F472B6]"
+                      title="Up Next Queue"
+                    >
+                      <Radio className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 flex items-center justify-center">
+                    {renderFullPlayerDeck(true)}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>
