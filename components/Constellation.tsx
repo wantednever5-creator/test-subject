@@ -227,10 +227,10 @@ export default function Constellation() {
 
                 {/* LIVE CIPHER STREAM DECK */}
                 <div className="p-5 md:p-8 rounded-3xl bg-black/60 border border-white/10 font-mono text-[10px] md:text-sm text-[#F472B6] mb-8 space-y-2 shadow-inner">
-                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.6 }} transition={{ delay: 0.3 }}>&gt; INITIALIZING SECURE DECRYPTION STREAM...</motion.p>
-                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.8 }} transition={{ delay: 0.8 }}>&gt; BYPASSING NODE [01] AMONG US... [OK]</motion.p>
-                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.9 }} transition={{ delay: 1.3 }}>&gt; SYNCING NODE [02] BALCONY FUMBLE... [OK]</motion.p>
-                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.8 }} className="text-white">&gt; ALL 6 TIMELINE VECTORS LOCKED. DISPLAYING CLASSIFIED TRANSMISSION.</motion.p>
+                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.6 }} transition={{ delay: 0.3 }}> INITIALIZING SECURE DECRYPTION STREAM...</motion.p>
+                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.8 }} transition={{ delay: 0.8 }}> BYPASSING NODE [01] AMONG US... [OK]</motion.p>
+                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.9 }} transition={{ delay: 1.3 }}> SYNCING NODE [02] BALCONY FUMBLE... [OK]</motion.p>
+                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.8 }} className="text-white"> ALL 6 TIMELINE VECTORS LOCKED. DISPLAYING CLASSIFIED TRANSMISSION.</motion.p>
                 </div>
 
                 <motion.h3 initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 2.2 }} className="text-4xl md:text-6xl font-light mb-8 text-white tracking-tight">
@@ -256,7 +256,7 @@ export default function Constellation() {
                   <span>Coordinates Locked: Delhi // Jaipur</span>
                   <div className="flex items-center gap-3 text-[#F472B6] bg-[#F472B6]/10 px-6 py-2.5 rounded-full border border-[#F472B6]/30">
                     <Heart className="w-4 h-4 fill-current animate-pulse" />
-                    <span className="font-semibold text-white">Kripton & Moon</span>
+                    <span className="font-semibold text-white">onegame & Moon</span>
                   </div>
                 </div>
 

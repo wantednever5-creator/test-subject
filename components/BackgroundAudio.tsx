@@ -188,7 +188,8 @@ const apiItemToTrack = (item: any): MusicTrack => ({
   duration: typeof item.duration === "number" ? item.duration : null
 });
 
-export default function BackgroundAudio({ identity = "Vault User" }: { identity?: string }) {
+export default function BackgroundAudio({ identity: rawIdentity = "Vault User" }: { identity?: string }) {
+  const identity = rawIdentity === "Kripton" ? "onegame" : rawIdentity;
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>("discover");
   const [mobilePlayerExpanded, setMobilePlayerExpanded] = useState(false);
