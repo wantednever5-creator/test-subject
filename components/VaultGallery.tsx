@@ -2,17 +2,12 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { createClient } from "@supabase/supabase-js";
 import {
   ArrowLeft, Upload, Loader2, Download, X, ChevronLeft,
   ChevronRight, Play, Trash2, Image as ImageIcon, Film,
   LayoutGrid, AlertCircle
 } from "lucide-react";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
-);
+import { supabase } from "../lib/supabase";
 
 export type GalleryItem = {
   id: string;
@@ -27,6 +22,8 @@ export type GalleryItem = {
 };
 
 type FilterTab = "all" | "image" | "video";
+
+const formatDisplayName = (name: string) => (name === "Kripton" ? "onegame" : name);
 
 const formatGroupDate = (isoString: string) => {
   const date = new Date(isoString);
@@ -74,13 +71,12 @@ export async function uploadMediaToVault(
   const { data: urlData } = supabase.storage.from("vault_media").getPublicUrl(storagePath);
   const publicUrl = urlData.publicUrl;
 
-  // Automatically register every uploaded photo/video in the shared Gallery
   await supabase.from("vault_gallery").upsert(
     {
       media_url: publicUrl,
       storage_path: storagePath,
       media_type: mediaType,
-      sender: identity,
+      sender: formatDisplayName(identity),
       file_name: file.name,
       source
     },
@@ -144,7 +140,6 @@ export default function VaultGallery({ identity, onClose }: { identity: string; 
       }
     }
 
-    // Also include older photos/videos shared in chat before vault_gallery existed
     if (chatMediaRows) {
       for (const row of chatMediaRows as any[]) {
         if (!row.media_url || mergedMap.has(row.media_url)) continue;
@@ -209,7 +204,6 @@ export default function VaultGallery({ identity, onClose }: { identity: string; 
 
   const activeItem = viewerIndex !== null ? filteredItems[viewerIndex] ?? null : null;
 
-  // Keyboard navigation inside Fullscreen Lightbox
   useEffect(() => {
     if (viewerIndex === null) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -242,7 +236,7 @@ export default function VaultGallery({ identity, onClose }: { identity: string; 
         setErrorMsg(
           err?.message?.includes("maximum allowed size")
             ? "One or more files exceeded the 50 MB limit."
-            : "Upload failed. Make sure you ran the 'vault_media' SQL setup in Supabase."
+            : "Upload failed. Make sure the 'vault_media' bucket and 'vault_gallery' table exist in Supabase."
         );
       }
     }
@@ -262,7 +256,7 @@ export default function VaultGallery({ identity, onClose }: { identity: string; 
 
   const handleDeleteActive = async (item: GalleryItem) => {
     if (item.fromChatOnly) {
-      setErrorMsg("This legacy item lives in an older chat message—delete it from chat.");
+      setErrorMsg("This item lives in an older chat message—delete it from chat.");
       return;
     }
     if (!window.confirm("Remove this item from the shared gallery?")) return;
@@ -291,7 +285,6 @@ export default function VaultGallery({ identity, onClose }: { identity: string; 
       transition={{ duration: 0.22, ease: "easeOut" }}
       className="fixed inset-0 z-[999995] bg-[#06090e] text-white flex flex-col w-screen h-[100dvh] overflow-hidden"
     >
-      {/* Subtle Ambient Glow */}
       <div className="pointer-events-none absolute -top-28 left-1/2 -translate-x-1/2 w-[520px] h-[300px] bg-gradient-to-b from-[#9333EA]/20 via-[#F472B6]/10 to-transparent blur-3xl" />
 
       {/* Top Glass Header */}
@@ -388,7 +381,7 @@ export default function VaultGallery({ identity, onClose }: { identity: string; 
         )}
       </AnimatePresence>
 
-      {/* Phone-Style Date-Grouped Photo & Video Grid */}
+      {/* Date-Grouped Photo & Video Grid */}
       <div className="relative z-10 flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-5 pb-12">
         <div className="max-w-6xl mx-auto space-y-7">
           {isLoading ? (
@@ -454,7 +447,6 @@ export default function VaultGallery({ identity, onClose }: { identity: string; 
                         />
                       )}
 
-                      {/* Quick Download Overlay on Desktop Hover */}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -466,10 +458,9 @@ export default function VaultGallery({ identity, onClose }: { identity: string; 
                         <Download className="w-3.5 h-3.5" />
                       </button>
 
-                      {/* Discreet Sender Pill */}
                       <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between pointer-events-none">
                         <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-md bg-black/55 backdrop-blur-md text-white/85 truncate max-w-[80%]">
-                          {item.sender}
+                          {formatDisplayName(item.sender)}
                         </span>
                       </div>
                     </div>
@@ -490,10 +481,9 @@ export default function VaultGallery({ identity, onClose }: { identity: string; 
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 bg-black/96 backdrop-blur-2xl flex flex-col"
           >
-            {/* Lightbox Top Bar */}
             <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 bg-gradient-to-b from-black/80 to-transparent z-20 flex-shrink-0">
               <div className="min-w-0 text-left">
-                <p className="text-sm font-semibold text-white truncate">{activeItem.sender}</p>
+                <p className="text-sm font-semibold text-white truncate">{formatDisplayName(activeItem.sender)}</p>
                 <p className="text-[11px] text-white/55 font-mono">
                   {formatFullTimestamp(activeItem.created_at)} • {viewerIndex + 1} / {filteredItems.length}
                 </p>
@@ -535,12 +525,10 @@ export default function VaultGallery({ identity, onClose }: { identity: string; 
               </div>
             </div>
 
-            {/* Center Media Canvas */}
             <div
               onClick={() => setViewerIndex(null)}
               className="relative flex-1 min-h-0 flex items-center justify-center p-3 sm:p-8 select-none"
             >
-              {/* Previous Button */}
               {viewerIndex > 0 && (
                 <button
                   onClick={(e) => {
@@ -554,7 +542,6 @@ export default function VaultGallery({ identity, onClose }: { identity: string; 
                 </button>
               )}
 
-              {/* Media Element */}
               <div
                 onClick={(e) => e.stopPropagation()}
                 className="max-w-full max-h-full flex items-center justify-center"
@@ -579,7 +566,6 @@ export default function VaultGallery({ identity, onClose }: { identity: string; 
                 )}
               </div>
 
-              {/* Next Button */}
               {viewerIndex < filteredItems.length - 1 && (
                 <button
                   onClick={(e) => {

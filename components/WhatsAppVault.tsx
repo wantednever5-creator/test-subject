@@ -6,10 +6,11 @@ import {
   Smile, Send, CheckCheck, X, Trash2, Reply, SmilePlus,
   Image as ImageIcon, Download, Palette, ArrowLeft, Search,
   Upload, ChevronUp, ChevronDown, Loader2, Link2, Sparkles,
-  ArrowDown, Gift, Maximize, Copy, Check, Music, Play
+  ArrowDown, Gift, Maximize, Copy, Check, Music, Play, LayoutGrid
 } from "lucide-react";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { supabase } from "../lib/supabase";
+import VaultGallery, { uploadMediaToVault, downloadVaultMedia } from "./VaultGallery";
 
 const GIPHY_API_KEY = "m8EagdbaKHSgg529mP9wVp1qenRWNMkp";
 const START_INDEX = 100000;
@@ -102,46 +103,6 @@ const renderFormattedText = (text: string) => {
     )
   );
 };
-
-async function uploadChatMedia(file: File): Promise<{ publicUrl: string; mediaType: "image" | "video" }> {
-  const mediaType: "image" | "video" = file.type.startsWith("video") ? "video" : "image";
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const storagePath = `chat/${Date.now()}_${Math.random().toString(36).slice(2, 7)}_${safeName}`;
-
-  const { error: uploadErr } = await supabase.storage
-    .from("vault_media")
-    .upload(storagePath, file, {
-      contentType: file.type || (mediaType === "video" ? "video/mp4" : "image/jpeg"),
-      cacheControl: "31536000",
-      upsert: false
-    });
-
-  if (uploadErr) {
-    throw new Error(uploadErr.message || "Upload failed");
-  }
-
-  const { data: urlData } = supabase.storage.from("vault_media").getPublicUrl(storagePath);
-  return { publicUrl: urlData.publicUrl, mediaType };
-}
-
-async function downloadMediaFile(url: string, type: "image" | "video") {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("Fetch failed");
-    const blob = await res.blob();
-    const ext = type === "video" ? "mp4" : "jpg";
-    const blobUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = blobUrl;
-    link.download = `Vault_${Date.now()}.${ext}`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-  } catch (_) {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
-}
 
 const VaultHeader = ({ context }: { context?: VirtuosoContext }) => {
   if (!context) return null;
@@ -245,6 +206,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   const [pickerTab, setPickerTab] = useState<"emoji" | "gif" | null>(null);
   const [emojiCategory, setEmojiCategory] = useState<keyof typeof EMOJI_CATEGORIES>("smileys");
 
+  const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const [uploadingMediaText, setUploadingMediaText] = useState<string | null>(null);
   const [fullscreenMedia, setFullscreenMedia] = useState<{ url: string; type: "image" | "video" } | null>(null);
 
@@ -728,7 +690,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
       );
 
       try {
-        const { publicUrl, mediaType } = await uploadChatMedia(file);
+        const { publicUrl, mediaType } = await uploadMediaToVault(file, identity, "chat");
         await sendMessage("", publicUrl, mediaType);
       } catch (err: any) {
         alert(
@@ -820,6 +782,11 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   return (
     <div className="fixed inset-0 z-[99999] bg-[#080d12] flex flex-col w-screen h-[100dvh] overflow-hidden select-none sm:select-auto">
 
+      {/* SHARED GALLERY MODAL */}
+      <AnimatePresence>
+        {isGalleryOpen && <VaultGallery identity={identity} onClose={() => setIsGalleryOpen(false)} />}
+      </AnimatePresence>
+
       {/* FULLSCREEN MEDIA LIGHTBOX */}
       <AnimatePresence>
         {fullscreenMedia && (
@@ -832,7 +799,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
           >
             <div className="absolute top-5 right-5 flex gap-3 z-20" onClick={(e) => e.stopPropagation()}>
               <button
-                onClick={() => downloadMediaFile(fullscreenMedia.url, fullscreenMedia.type)}
+                onClick={() => downloadVaultMedia(fullscreenMedia.url, fullscreenMedia.type)}
                 className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/15 px-4 py-2.5 rounded-full text-white text-xs font-semibold transition-colors"
                 title="Download to device"
               >
@@ -930,7 +897,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                 {mobileSheetMsg.media_url ? (
                   <button
                     onClick={() => {
-                      downloadMediaFile(
+                      downloadVaultMedia(
                         mobileSheetMsg.media_url!,
                         mobileSheetMsg.media_type === "video" ? "video" : "image"
                       );
@@ -996,7 +963,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
       {/* PREMIUM GLASS HEADER */}
       <div className="bg-[#0e151d]/90 backdrop-blur-xl px-3 sm:px-5 py-2.5 flex justify-between items-center border-b border-white/[0.06] z-30 flex-shrink-0">
-        <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
           <button
             onClick={onClose}
             className="text-white/60 hover:text-white hover:bg-white/[0.06] p-2 rounded-full transition-colors flex-shrink-0"
@@ -1024,7 +991,17 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
           </div>
         </div>
 
-        <div className="flex items-center gap-0.5 sm:gap-1.5 text-white/65 flex-shrink-0">
+        <div className="flex items-center gap-1 sm:gap-1.5 text-white/65 flex-shrink-0">
+          {/* GALLERY BUTTON */}
+          <button
+            onClick={() => setIsGalleryOpen(true)}
+            title="Open Shared Gallery"
+            className="bg-[#111820]/90 hover:bg-[#F472B6]/15 border border-[#F472B6]/40 text-[#F472B6] px-2.5 sm:px-3 py-1.5 rounded-full text-[11px] font-medium flex items-center gap-1.5 shadow-md transition-all"
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline tracking-wide">Gallery</span>
+          </button>
+
           <button
             onClick={() => setIsSearchingChat(!isSearchingChat)}
             title="Search Chat"
@@ -1049,7 +1026,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
           <button
             onClick={onClose}
             title="Close"
-            className="p-2 rounded-full hover:bg-white/[0.06] hover:text-white transition-colors"
+            className="hidden sm:flex p-2 rounded-full hover:bg-white/[0.06] hover:text-white transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -1327,7 +1304,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              downloadMediaFile(msg.media_url!, msg.media_type === "video" ? "video" : "image");
+                              downloadVaultMedia(msg.media_url!, msg.media_type === "video" ? "video" : "image");
                             }}
                             title="Download"
                             className="p-1.5 rounded-full hover:bg-white/10 text-white/70 hover:text-[#00c896] transition-colors"
@@ -1514,6 +1491,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
             <div className="max-w-4xl mx-auto flex items-center gap-2.5 text-xs text-[#F472B6] font-mono">
               <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
               <span>{uploadingMediaText}</span>
+              <span className="text-white/40 ml-auto">Saving to Chat & Gallery</span>
             </div>
           </motion.div>
         )}
