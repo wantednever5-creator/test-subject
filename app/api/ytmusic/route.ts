@@ -183,30 +183,64 @@ async function ytDataApiTrending(): Promise<NormalizedTrack[]> {
   }));
 }
 
+async function filterTrulyEmbeddable(tracks: NormalizedTrack[]): Promise<NormalizedTrack[]> {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey || tracks.length === 0) return tracks;
+
+  const ids = tracks.map((t) => t.videoId).slice(0, 20).join(",");
+  const res = await fetch(
+    `https://www.googleapis.com/youtube/v3/videos?part=status&id=${ids}&key=${apiKey}`,
+    { cache: "no-store" }
+  );
+  if (!res.ok) return tracks;
+
+  const data = await res.json();
+  const embeddableSet = new Set<string>();
+  for (const item of data?.items || []) {
+    if (item?.status?.embeddable === true) {
+      embeddableSet.add(item.id);
+    }
+  }
+
+  const filtered = tracks.filter((t) => embeddableSet.has(t.videoId));
+  // Prefer non-label lyric/fan uploads first (label channels often have domain restrictions)
+  const labelRegex = /(t-series|vevo|sony music|zee music|tips official|saregama|yrf| - topic$)/i;
+  return filtered.sort((a, b) => {
+    const aIsLabel = labelRegex.test(a.artist) ? 1 : 0;
+    const bIsLabel = labelRegex.test(b.artist) ? 1 : 0;
+    return aIsLabel - bIsLabel;
+  });
+}
+
 async function searchSongsSmart(query: string, embedFallback = false): Promise<NormalizedTrack[]> {
-  // For embed-blocked fallbacks, prefer YouTube Data API's explicit videoEmbeddable=true filter first
-  if (embedFallback && process.env.YOUTUBE_API_KEY) {
-    const apiTracks = await ytDataApiSearch(`${query} lyrics`, 8, true);
-    if (apiTracks.length > 0) return dedupeTracks(apiTracks);
+  if (embedFallback) {
+    const candidates: NormalizedTrack[] = [];
+    if (process.env.YOUTUBE_API_KEY) {
+      const apiTracks = await ytDataApiSearch(`${query} lyrics audio`, 12, true);
+      candidates.push(...apiTracks);
+    }
+    try {
+      const yt = await getYTMusicClient();
+      const ytVids = await yt.searchVideos(`${query} lyrics`);
+      candidates.push(...((ytVids || []).map(normalizeYTMItem).filter(Boolean) as NormalizedTrack[]));
+    } catch (err) {
+      resetYTMusicClient();
+    }
+    const deduped = dedupeTracks(candidates);
+    return filterTrulyEmbeddable(deduped);
   }
 
   try {
     const yt = await getYTMusicClient();
-    const raw = embedFallback
-      ? await yt.searchVideos(`${query} lyrics`)
-      : await yt.searchSongs(query);
-
-    const parsed = dedupeTracks(
-      (raw || []).map(normalizeYTMItem).filter(Boolean) as NormalizedTrack[]
-    );
+    const raw = await yt.searchSongs(query);
+    const parsed = dedupeTracks((raw || []).map(normalizeYTMItem).filter(Boolean) as NormalizedTrack[]);
     if (parsed.length > 0) return parsed;
   } catch (err) {
     console.error("ytmusic-api search failed, trying fallback:", err);
     resetYTMusicClient();
   }
 
-  // Fallback to YouTube Data API v3
-  return dedupeTracks(await ytDataApiSearch(embedFallback ? `${query} lyrics` : query, 18, embedFallback));
+  return dedupeTracks(await ytDataApiSearch(query, 18, false));
 }
 
 export async function GET(req: NextRequest) {

@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { createClient } from "@supabase/supabase-js";
 import {
   Smile, Send, CheckCheck, X, Trash2, Reply, SmilePlus,
   Image as ImageIcon, Download, Palette, ArrowLeft, Search,
@@ -10,15 +9,11 @@ import {
   ArrowDown, Gift, Maximize, Copy, Check, Music, Play
 } from "lucide-react";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
+import { supabase } from "../lib/supabase";
 
 const GIPHY_API_KEY = "m8EagdbaKHSgg529mP9wVp1qenRWNMkp";
 const START_INDEX = 100000;
 const PAGE_SIZE = 35;
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
-);
 
 type Message = {
   id: string;
@@ -281,6 +276,8 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   const [currentMatchIndex, setCurrentMatchIndex] = useState<number>(-1);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const typingChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const typingReadyRef = useRef(false);
 
   const cutoffRef = useRef<string>(new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString());
   const messagesRef = useRef<Message[]>([]);
@@ -575,7 +572,10 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
       .on("broadcast", { event: "typing" }, (payload) => {
         if (payload.payload.sender === partnerName) setPartnerTyping(payload.payload.isTyping);
       })
-      .subscribe();
+      .subscribe((status) => {
+        typingReadyRef.current = status === "SUBSCRIBED";
+      });
+    typingChannelRef.current = typingChannel;
 
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
@@ -588,6 +588,8 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("focus", handleVisibility);
+      typingReadyRef.current = false;
+      typingChannelRef.current = null;
       updateStatus(false);
       supabase.removeChannel(chatSub);
       supabase.removeChannel(presenceChannel);
@@ -660,27 +662,33 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   const handleTypingChange = (val: string) => {
     setNewMessage(val);
-    supabase.channel("typing_presence").send({
-      type: "broadcast",
-      event: "typing",
-      payload: { sender: identity, isTyping: val.length > 0 }
-    });
+    if (typingReadyRef.current && typingChannelRef.current) {
+      typingChannelRef.current.send({
+        type: "broadcast",
+        event: "typing",
+        payload: { sender: identity, isTyping: val.length > 0 }
+      });
+    }
   };
 
   const sendMessage = async (textToSend: string, mediaUrl?: string, mediaType?: string) => {
     if (!textToSend.trim() && !mediaUrl) return;
 
-    const replyText = replyingTo ? replyingTo.text : null;
+    const replyText = replyingTo
+      ? replyingTo.text || (replyingTo.media_type === "video" ? "Video" : "Photo")
+      : null;
     setNewMessage("");
     setReplyingTo(null);
     setPickerTab(null);
     setGifSearch("");
 
-    supabase.channel("typing_presence").send({
-      type: "broadcast",
-      event: "typing",
-      payload: { sender: identity, isTyping: false }
-    });
+    if (typingReadyRef.current && typingChannelRef.current) {
+      typingChannelRef.current.send({
+        type: "broadcast",
+        event: "typing",
+        payload: { sender: identity, isTyping: false }
+      });
+    }
 
     const { data, error } = await supabase
       .from("secret_chat")
