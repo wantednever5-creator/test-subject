@@ -7,9 +7,10 @@ import {
   Smile, Send, CheckCheck, X, Trash2, Reply, SmilePlus,
   Image as ImageIcon, Download, Palette, ArrowLeft, Search,
   Upload, ChevronUp, ChevronDown, Loader2, Link2, Sparkles,
-  ArrowDown, Gift, Maximize, Copy, Check, Music
+  ArrowDown, Gift, Maximize, Copy, Check, Music, Play, LayoutGrid
 } from "lucide-react";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
+import VaultGallery, { uploadMediaToVault, downloadVaultMedia } from "./VaultGallery";
 
 const GIPHY_API_KEY = "m8EagdbaKHSgg529mP9wVp1qenRWNMkp";
 const START_INDEX = 100000;
@@ -106,7 +107,6 @@ const renderFormattedText = (text: string) => {
   );
 };
 
-// Stable Header component outside render loop so typing never causes Virtuoso layout jitter
 const VaultHeader = ({ context }: { context?: VirtuosoContext }) => {
   if (!context) return null;
   const {
@@ -135,7 +135,6 @@ const VaultHeader = ({ context }: { context?: VirtuosoContext }) => {
         </span>
       )}
 
-      {/* Show Birthday Surprise once user reaches the top of the 48h window */}
       {!isMemoriesUnlocked && !hasMoreRecent && (
         <motion.div
           initial={{ scale: 0.96, opacity: 0, y: 8 }}
@@ -187,7 +186,6 @@ const VaultFooter = () => <div className="h-3" />;
 export default function WhatsAppVault({ identity, onClose }: { identity: string; onClose: () => void }) {
   const partnerName = identity === "Kripton" ? "Moon" : "Kripton";
 
-  // Single atomic state keeps `items` and `firstItemIndex` 100% in sync during prepends
   const [chatState, setChatState] = useState<{
     items: Message[];
     firstItemIndex: number;
@@ -210,7 +208,10 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
   const [pickerTab, setPickerTab] = useState<"emoji" | "gif" | null>(null);
   const [emojiCategory, setEmojiCategory] = useState<keyof typeof EMOJI_CATEGORIES>("smileys");
 
-  const [fullscreenMedia, setFullscreenMedia] = useState<{ url: string; type: string } | null>(null);
+  // Gallery Modal & Media Upload State
+  const [isGalleryOpen, setIsGalleryOpen] = useState(false);
+  const [uploadingMediaText, setUploadingMediaText] = useState<string | null>(null);
+  const [fullscreenMedia, setFullscreenMedia] = useState<{ url: string; type: "image" | "video" } | null>(null);
 
   // Scroll & Unread Protection State
   const [showScrollBottom, setShowScrollBottom] = useState(false);
@@ -243,7 +244,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
 
-  // Refs for race-free async guards and scroll locking
   const cutoffRef = useRef<string>(new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString());
   const messagesRef = useRef<Message[]>([]);
   const isAtBottomRef = useRef<boolean>(true);
@@ -257,7 +257,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     messagesRef.current = messages;
   }, [messages]);
 
-  // Listen to live cover art updates from BackgroundAudio (only non-null while inside the Music Room)
+  // Listen to live cover art updates from BackgroundAudio
   useEffect(() => {
     const win = window as Window & { __vaultRoomCover?: string | null };
     setRoomCoverBg(win.__vaultRoomCover || null);
@@ -273,7 +273,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   const activeSongCover = useSongCoverBg && roomCoverBg ? roomCoverBg : null;
 
-  // Atomic merge: deduplicates, sorts strictly chronologically, and preserves scroll offset on prepends
   const mergeMessages = useCallback((incoming: Message[]) => {
     if (!incoming || incoming.length === 0) return;
 
@@ -335,7 +334,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     } catch (_) {}
   };
 
-  // 1. INITIAL LOAD: Fetch ONLY the newest 35 messages within the 48-hour window
   const loadInitialMessages = useCallback(async () => {
     setIsInitialLoading(true);
     const { data, error } = await supabase
@@ -358,7 +356,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     }, 450);
   }, [mergeMessages]);
 
-  // 2. LAZY LOAD OLDER: Fetches 35 older messages above the current oldest message as user scrolls up
   const loadOlderMessages = useCallback(
     async (forceUnlockMode = false) => {
       const unlocked = forceUnlockMode || isMemoriesUnlockedRef.current;
@@ -415,7 +412,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     [mergeMessages]
   );
 
-  // 3. UNLOCK MEMORIES: Removes the 48h wall and loads the first 35 archived messages smoothly
   const handleUnlockMemories = useCallback(async () => {
     if (isMemoriesUnlockedRef.current) return;
     isMemoriesUnlockedRef.current = true;
@@ -424,7 +420,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     await loadOlderMessages(true);
   }, [loadOlderMessages]);
 
-  // 4. WAKE-FROM-SLEEP SYNC: Only fetches messages NEWER than our latest loaded message
   const syncMissedMessages = useCallback(async () => {
     const latestMsg = messagesRef.current[messagesRef.current.length - 1];
     let query = supabase
@@ -481,7 +476,9 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         } else if (!alreadyExists) {
           playNotificationSound();
           if ("Notification" in window && Notification.permission === "granted") {
-            new Notification(incoming.sender, { body: incoming.text || "Sent a media file" });
+            new Notification(incoming.sender, {
+              body: incoming.media_type === "video" ? "Sent a video" : incoming.media_type === "image" ? "Sent a photo" : incoming.text || "New message"
+            });
           }
 
           if (isAtBottomRef.current) {
@@ -653,7 +650,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
       .insert([
         {
           sender: identity,
-          text: textToSend || (mediaType === "gif" ? "GIF" : mediaType === "video" ? "🎬 Video" : "📷 Photo"),
+          text: textToSend || (mediaType === "gif" ? "GIF" : ""),
           reply_to: replyText,
           media_url: mediaUrl || null,
           media_type: mediaType || null
@@ -671,17 +668,34 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64String = reader.result as string;
-      const type = file.type.startsWith("video") ? "video" : "image";
-      sendMessage("", base64String, type);
-    };
-    reader.readAsDataURL(file);
+  // Streams photos/videos directly to Supabase Storage (smooth streaming, instant Realtime, auto-saved to Gallery)
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
     e.target.value = "";
+    if (files.length === 0) return;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const isVideo = file.type.startsWith("video");
+      setUploadingMediaText(
+        files.length > 1
+          ? `Uploading ${i + 1}/${files.length} (${isVideo ? "video" : "photo"})...`
+          : `Uploading ${isVideo ? "video" : "photo"}...`
+      );
+
+      try {
+        const { publicUrl, mediaType } = await uploadMediaToVault(file, identity, "chat");
+        await sendMessage("", publicUrl, mediaType);
+      } catch (err: any) {
+        alert(
+          err?.message?.includes("maximum allowed size")
+            ? "File exceeds Supabase's 50 MB limit."
+            : "Media upload failed. Run the 'vault_media' SQL setup in Supabase first."
+        );
+      }
+    }
+
+    setUploadingMediaText(null);
   };
 
   const handleWallpaperUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -699,11 +713,13 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   const executeMagicLink = async (targetMsg: Message) => {
     if (!linkingReplyFor) return;
+    const preview =
+      targetMsg.text || (targetMsg.media_type === "video" ? "Video" : targetMsg.media_type === "image" ? "Photo" : "Media");
     setChatState((prev) => ({
       ...prev,
-      items: prev.items.map((m) => (m.id === linkingReplyFor ? { ...m, reply_to: targetMsg.text } : m))
+      items: prev.items.map((m) => (m.id === linkingReplyFor ? { ...m, reply_to: preview } : m))
     }));
-    await supabase.from("secret_chat").update({ reply_to: targetMsg.text }).eq("id", linkingReplyFor);
+    await supabase.from("secret_chat").update({ reply_to: preview }).eq("id", linkingReplyFor);
     setLinkingReplyFor(null);
   };
 
@@ -713,7 +729,10 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
       alert("Messages can only be deleted within 15 minutes of sending.");
       return;
     }
-    await supabase.from("secret_chat").update({ deleted: true, text: "This message was deleted." }).eq("id", msg.id);
+    await supabase
+      .from("secret_chat")
+      .update({ deleted: true, text: "This message was deleted.", media_url: null, media_type: null })
+      .eq("id", msg.id);
   };
 
   const addReaction = async (msg: Message, emoji: string) => {
@@ -742,7 +761,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
   const exportChat = () => {
     const chatContent = messages
-      .map((m) => `[${new Date(m.created_at).toLocaleString()}] ${m.sender}: ${m.text}`)
+      .map((m) => `[${new Date(m.created_at).toLocaleString()}] ${m.sender}: ${m.text || m.media_url || ""}`)
       .join("\n");
     const blob = new Blob([chatContent], { type: "text/plain;charset=utf-8" });
     const link = document.createElement("a");
@@ -751,26 +770,18 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
     link.click();
   };
 
-  const downloadMedia = async (url: string, type: string) => {
-    try {
-      const res = await fetch(url);
-      const blob = await res.blob();
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `Vault_Media_${Date.now()}.${type === "video" ? "mp4" : "png"}`;
-      link.click();
-    } catch (_) {
-      alert("Unable to download file.");
-    }
-  };
-
   const formatTime = (isoString: string) =>
     new Date(isoString).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 
   return (
     <div className="fixed inset-0 z-[99999] bg-[#080d12] flex flex-col w-screen h-[100dvh] overflow-hidden select-none sm:select-auto">
 
-      {/* FULLSCREEN MEDIA LIGHTBOX */}
+      {/* SHARED PHONE-STYLE GALLERY PAGE (Accessible from Chat Screen beside Music Library) */}
+      <AnimatePresence>
+        {isGalleryOpen && <VaultGallery identity={identity} onClose={() => setIsGalleryOpen(false)} />}
+      </AnimatePresence>
+
+      {/* FULLSCREEN MEDIA LIGHTBOX (Chat Images & Smooth Synced Videos) */}
       <AnimatePresence>
         {fullscreenMedia && (
           <motion.div
@@ -778,29 +789,41 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setFullscreenMedia(null)}
-            className="absolute inset-0 z-[999999] bg-black/95 backdrop-blur-2xl flex flex-col items-center justify-center p-4"
+            className="absolute inset-0 z-[999999] bg-black/96 backdrop-blur-2xl flex flex-col items-center justify-center p-4"
           >
-            <div className="absolute top-5 right-5 flex gap-3 z-10" onClick={(e) => e.stopPropagation()}>
+            <div className="absolute top-5 right-5 flex gap-3 z-20" onClick={(e) => e.stopPropagation()}>
               <button
-                onClick={() => downloadMedia(fullscreenMedia.url, fullscreenMedia.type)}
-                className="bg-white/10 hover:bg-white/20 border border-white/10 p-3 rounded-full text-white transition-colors"
-                title="Download"
+                onClick={() => downloadVaultMedia(fullscreenMedia.url, fullscreenMedia.type)}
+                className="flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/15 px-4 py-2.5 rounded-full text-white text-xs font-semibold transition-colors"
+                title="Download to device"
               >
-                <Download className="w-5 h-5" />
+                <Download className="w-4 h-4 text-[#00c896]" />
+                <span>Download</span>
               </button>
               <button
                 onClick={() => setFullscreenMedia(null)}
-                className="bg-white/10 hover:bg-white/20 border border-white/10 p-3 rounded-full text-white transition-colors"
+                className="bg-white/10 hover:bg-white/20 border border-white/15 p-2.5 rounded-full text-white transition-colors"
                 title="Close"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div onClick={(e) => e.stopPropagation()} className="max-w-full max-h-[85vh]">
+            <div onClick={(e) => e.stopPropagation()} className="max-w-full max-h-[85dvh] flex items-center justify-center">
               {fullscreenMedia.type === "video" ? (
-                <video src={fullscreenMedia.url} controls autoPlay className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl" />
+                <video
+                  src={fullscreenMedia.url}
+                  controls
+                  autoPlay
+                  playsInline
+                  preload="auto"
+                  className="max-w-full max-h-[85dvh] rounded-2xl shadow-2xl bg-black"
+                />
               ) : (
-                <img src={fullscreenMedia.url} alt="Fullscreen" className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl" />
+                <img
+                  src={fullscreenMedia.url}
+                  alt="Fullscreen"
+                  className="max-w-full max-h-[85dvh] object-contain rounded-2xl shadow-2xl"
+                />
               )}
             </div>
           </motion.div>
@@ -829,7 +852,9 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                 <p className="text-[10px] font-mono uppercase tracking-wider text-[#F472B6] mb-0.5">
                   {mobileSheetMsg.sender}
                 </p>
-                <p className="text-xs text-white/80 line-clamp-2">{mobileSheetMsg.text}</p>
+                <p className="text-xs text-white/80 line-clamp-2">
+                  {mobileSheetMsg.text || (mobileSheetMsg.media_type === "video" ? "Video" : "Photo")}
+                </p>
               </div>
 
               <div className="flex items-center justify-between bg-white/[0.04] rounded-2xl px-3 py-2 border border-white/[0.06]">
@@ -863,17 +888,32 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                 >
                   <Link2 className="w-4 h-4 text-[#F472B6]" /> Link Reply
                 </button>
-                <button
-                  onClick={() => copyText(mobileSheetMsg)}
-                  className="flex items-center justify-center gap-2 bg-white/[0.06] hover:bg-white/[0.1] text-white text-xs font-medium py-3 rounded-2xl transition-colors"
-                >
-                  {copiedId === mobileSheetMsg.id ? (
-                    <Check className="w-4 h-4 text-[#00A884]" />
-                  ) : (
-                    <Copy className="w-4 h-4 text-white/70" />
-                  )}
-                  {copiedId === mobileSheetMsg.id ? "Copied" : "Copy Text"}
-                </button>
+                {mobileSheetMsg.media_url ? (
+                  <button
+                    onClick={() => {
+                      downloadVaultMedia(
+                        mobileSheetMsg.media_url!,
+                        mobileSheetMsg.media_type === "video" ? "video" : "image"
+                      );
+                      setMobileSheetMsg(null);
+                    }}
+                    className="flex items-center justify-center gap-2 bg-white/[0.06] hover:bg-white/[0.1] text-white text-xs font-medium py-3 rounded-2xl transition-colors"
+                  >
+                    <Download className="w-4 h-4 text-[#00c896]" /> Download
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => copyText(mobileSheetMsg)}
+                    className="flex items-center justify-center gap-2 bg-white/[0.06] hover:bg-white/[0.1] text-white text-xs font-medium py-3 rounded-2xl transition-colors"
+                  >
+                    {copiedId === mobileSheetMsg.id ? (
+                      <Check className="w-4 h-4 text-[#00A884]" />
+                    ) : (
+                      <Copy className="w-4 h-4 text-white/70" />
+                    )}
+                    {copiedId === mobileSheetMsg.id ? "Copied" : "Copy Text"}
+                  </button>
+                )}
                 {mobileSheetMsg.sender === identity ? (
                   <button
                     onClick={() => {
@@ -915,9 +955,9 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         )}
       </AnimatePresence>
 
-      {/* PREMIUM GLASS HEADER */}
+      {/* PREMIUM GLASS HEADER (Gallery Pill sits right beside the top-center Music Library pill) */}
       <div className="bg-[#0e151d]/90 backdrop-blur-xl px-3 sm:px-5 py-2.5 flex justify-between items-center border-b border-white/[0.06] z-30 flex-shrink-0">
-        <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
           <button
             onClick={onClose}
             className="text-white/60 hover:text-white hover:bg-white/[0.06] p-2 rounded-full transition-colors flex-shrink-0"
@@ -945,7 +985,17 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
           </div>
         </div>
 
-        <div className="flex items-center gap-0.5 sm:gap-1.5 text-white/65 flex-shrink-0">
+        <div className="flex items-center gap-1 sm:gap-1.5 text-white/65 flex-shrink-0">
+          {/* GALLERY PILL — Chat Screen Only, Positioned Beside Music Library */}
+          <button
+            onClick={() => setIsGalleryOpen(true)}
+            title="Open Shared Gallery"
+            className="bg-[#111820]/90 hover:bg-[#F472B6]/15 border border-[#F472B6]/40 text-[#F472B6] px-2.5 sm:px-3 py-1.5 rounded-full text-[11px] font-medium flex items-center gap-1.5 shadow-md transition-all"
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline tracking-wide">Gallery</span>
+          </button>
+
           <button
             onClick={() => setIsSearchingChat(!isSearchingChat)}
             title="Search Chat"
@@ -970,7 +1020,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
           <button
             onClick={onClose}
             title="Close"
-            className="p-2 rounded-full hover:bg-white/[0.06] hover:text-white transition-colors"
+            className="hidden sm:flex p-2 rounded-full hover:bg-white/[0.06] hover:text-white transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -1026,7 +1076,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
           >
             <p className="text-[10px] text-white/45 font-mono mb-2 uppercase tracking-widest">Chat Theme</p>
 
-            {/* Dynamic Music Room Cover Option */}
             <button
               onClick={() => {
                 setUseSongCoverBg(true);
@@ -1100,7 +1149,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
             : {}
         }
       >
-        {/* Dynamic Exact Song Cover Background (Only while in the Music Room & Live Song Cover is selected) */}
+        {/* Dynamic Exact Song Cover Background */}
         <AnimatePresence mode="wait">
           {activeSongCover && (
             <motion.div
@@ -1163,7 +1212,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
               const arrayIndex = virtuosoIndex - firstItemIndex;
               const isMe = msg.sender === identity;
               const isGif = msg.media_type === "gif";
-              const isMedia = !!msg.media_url;
+              const isMedia = Boolean(msg.media_url && !msg.deleted);
               const isHighlighted = matchedIndices[currentMatchIndex] === arrayIndex;
 
               const prevMsg = arrayIndex > 0 ? messages[arrayIndex - 1] : null;
@@ -1197,7 +1246,6 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
               return (
                 <div className={`px-3 sm:px-6 w-full flex flex-col max-w-4xl mx-auto ${samePrev ? "pt-[3px]" : "pt-2.5"} ${reactionDisplay.length > 0 ? "pb-3" : "pb-[2px]"}`}>
 
-                  {/* DATE SEPARATOR PILL */}
                   {showDateDivider && (
                     <div className="flex justify-center my-3">
                       <span className="bg-[#111922]/85 backdrop-blur-md border border-white/[0.06] text-white/55 text-[11px] font-medium px-3.5 py-1 rounded-full shadow-sm">
@@ -1248,6 +1296,18 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                         >
                           <SmilePlus className="w-3.5 h-3.5" />
                         </button>
+                        {isMedia && msg.media_url && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              downloadVaultMedia(msg.media_url!, msg.media_type === "video" ? "video" : "image");
+                            }}
+                            title="Download"
+                            className="p-1.5 rounded-full hover:bg-white/10 text-white/70 hover:text-[#00c896] transition-colors"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         {isMe && (
                           <button
                             onClick={(e) => { e.stopPropagation(); deleteMessage(msg); }}
@@ -1280,7 +1340,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
 
                     {/* MESSAGE BUBBLE */}
                     <div
-                      className={`max-w-[84%] sm:max-w-[70%] px-3.5 pt-2 pb-1.5 relative shadow-[0_2px_12px_rgba(0,0,0,0.22)] ${bubbleRadius} ${
+                      className={`max-w-[84%] sm:max-w-[70%] ${isMedia ? "p-1.5" : "px-3.5 pt-2 pb-1.5"} relative shadow-[0_2px_12px_rgba(0,0,0,0.22)] ${bubbleRadius} ${
                         msg.deleted
                           ? "bg-white/[0.04] border border-white/[0.07] text-white/45 italic"
                           : isMe
@@ -1302,46 +1362,69 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                         </div>
                       )}
 
-                      {/* Media */}
+                      {/* GIF */}
                       {isGif && msg.media_url && (
                         <div
-                          className="relative cursor-pointer group/img overflow-hidden rounded-xl my-1"
+                          className="relative cursor-pointer group/img overflow-hidden rounded-xl"
                           onClick={(e) => {
                             e.stopPropagation();
                             setFullscreenMedia({ url: msg.media_url!, type: "image" });
                           }}
                         >
                           <img src={msg.media_url} alt="GIF" className="rounded-xl max-w-[240px] max-h-[220px] object-cover" />
-                          <div className="absolute inset-0 bg-black/35 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
+                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
                             <Maximize className="w-5 h-5 text-white" />
                           </div>
                         </div>
                       )}
 
+                      {/* PREMIUM PHOTO CARD */}
                       {msg.media_url && !isGif && msg.media_type === "image" && (
                         <div
-                          className="relative cursor-pointer group/img overflow-hidden rounded-xl my-1"
+                          className="relative cursor-pointer group/img overflow-hidden rounded-xl bg-black/40"
                           onClick={(e) => {
                             e.stopPropagation();
                             setFullscreenMedia({ url: msg.media_url!, type: "image" });
                           }}
                         >
-                          <img src={msg.media_url} alt="Media" className="rounded-xl max-w-full max-h-[290px] object-cover" />
-                          <div className="absolute inset-0 bg-black/35 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
-                            <Maximize className="w-5 h-5 text-white" />
+                          <img
+                            src={msg.media_url}
+                            alt="Shared photo"
+                            loading="lazy"
+                            className="rounded-xl max-w-full max-h-[320px] object-cover"
+                          />
+                          <div className="absolute inset-0 bg-black/25 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
+                            <div className="bg-black/60 backdrop-blur-md p-2.5 rounded-full border border-white/20">
+                              <Maximize className="w-4 h-4 text-white" />
+                            </div>
                           </div>
                         </div>
                       )}
 
+                      {/* PREMIUM SMOOTH-STREAMING VIDEO CARD */}
                       {msg.media_url && !isGif && msg.media_type === "video" && (
-                        <div className="relative rounded-xl overflow-hidden my-1" onClick={(e) => e.stopPropagation()}>
-                          <video src={msg.media_url} controls className="rounded-xl max-w-full max-h-[290px] object-cover" />
-                          <button
-                            onClick={() => setFullscreenMedia({ url: msg.media_url!, type: "video" })}
-                            className="absolute top-2 right-2 bg-black/60 backdrop-blur-md p-1.5 rounded-lg hover:bg-black/80 text-white"
-                          >
-                            <Maximize className="w-4 h-4" />
-                          </button>
+                        <div
+                          className="relative cursor-pointer group/vid overflow-hidden rounded-xl bg-black/70 min-w-[210px] sm:min-w-[260px]"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFullscreenMedia({ url: msg.media_url!, type: "video" });
+                          }}
+                        >
+                          <video
+                            src={`${msg.media_url}#t=0.1`}
+                            preload="metadata"
+                            muted
+                            playsInline
+                            className="rounded-xl w-full max-h-[300px] object-cover"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/20 to-transparent flex items-center justify-center">
+                            <div className="w-12 h-12 rounded-full bg-black/60 group-hover/vid:bg-[#F472B6]/90 backdrop-blur-md border border-white/25 flex items-center justify-center shadow-2xl group-hover/vid:scale-110 transition-all">
+                              <Play className="w-5 h-5 text-white fill-white ml-0.5" />
+                            </div>
+                          </div>
+                          <span className="absolute top-2 left-2 text-[9px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-full bg-black/65 backdrop-blur-md text-white/90 border border-white/15">
+                            HD Video
+                          </span>
                         </div>
                       )}
 
@@ -1366,7 +1449,7 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
                       )}
 
                       {/* Timestamp & Read Ticks */}
-                      <div className="flex items-center justify-end gap-1 mt-1 opacity-65">
+                      <div className={`flex items-center justify-end gap-1 mt-1 opacity-65 ${isMedia ? "px-1.5 pb-0.5" : ""}`}>
                         <span className="text-[10px] font-mono tracking-tight">{formatTime(msg.created_at)}</span>
                         {isMe && !msg.deleted && (
                           <CheckCheck className={`w-3.5 h-3.5 ${partnerOnline ? "text-[#53bdeb]" : "text-white/45"}`} />
@@ -1402,6 +1485,24 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
         </AnimatePresence>
       </div>
 
+      {/* LIVE MEDIA UPLOAD PROGRESS BAR */}
+      <AnimatePresence>
+        {uploadingMediaText && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-[#0e151d] px-4 py-2 border-t border-white/[0.06] flex-shrink-0"
+          >
+            <div className="max-w-4xl mx-auto flex items-center gap-2.5 text-xs text-[#F472B6] font-mono">
+              <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
+              <span>{uploadingMediaText}</span>
+              <span className="text-white/40 ml-auto">Saving to Chat & Gallery</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* REPLY PREVIEW BAR */}
       <AnimatePresence>
         {replyingTo && (
@@ -1414,7 +1515,9 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
             <div className="max-w-4xl mx-auto flex justify-between items-center bg-[#16202a] border-l-[3px] border-[#00c896] rounded-xl px-3 py-2">
               <div className="text-left min-w-0 pr-3">
                 <p className="text-[11px] text-[#00c896] font-semibold">Replying to {replyingTo.sender}</p>
-                <p className="text-xs text-white/70 truncate">{replyingTo.text}</p>
+                <p className="text-xs text-white/70 truncate">
+                  {replyingTo.text || (replyingTo.media_type === "video" ? "Video" : "Photo")}
+                </p>
               </div>
               <button
                 onClick={() => setReplyingTo(null)}
@@ -1556,11 +1659,20 @@ export default function WhatsAppVault({ identity, onClose }: { identity: string;
             </button>
 
             <label
-              className="text-white/55 hover:text-white p-2 cursor-pointer rounded-full transition-colors"
-              title="Send Photo/Video"
+              className={`p-2 rounded-full transition-colors ${
+                uploadingMediaText ? "opacity-40 pointer-events-none" : "text-white/55 hover:text-white cursor-pointer"
+              }`}
+              title="Send Photo or Video"
             >
-              <ImageIcon className="w-5 h-5" />
-              <input type="file" accept="image/*,video/*" onChange={handleFileUpload} className="hidden" />
+              {uploadingMediaText ? <Loader2 className="w-5 h-5 animate-spin text-[#F472B6]" /> : <ImageIcon className="w-5 h-5" />}
+              <input
+                type="file"
+                accept="image/*,video/*"
+                multiple
+                disabled={Boolean(uploadingMediaText)}
+                onChange={handleFileUpload}
+                className="hidden"
+              />
             </label>
           </div>
 
